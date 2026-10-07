@@ -417,6 +417,14 @@ pkill -f "com.hongguowebos.app.service"
 
 本项目的服务端代码以 **GPL-3.0** 发布，因为它链接并分发了 GPL-3.0 的 `hongguo.cjs`。
 
+### 参考与致谢
+
+| 项目 | 参考用途 |
+| --- | --- |
+| [asdf17128/bili-webos](https://github.com/asdf17128/bili-webos) | **架构参考** —— React + Vite 前端、webOS JS Service 后端、本机媒体代理（HTTP Range 分段解密）、SSH 部署/重启 |
+| [N3urda/hongguoTV](https://github.com/N3urda/hongguoTV) | **接口 + 解密参考** —— 红果接口签名链路；CENC 解密的 subsample / IV / 样本索引实现（`kotlin-tv/core/.../MediaCrypto.kt`），以及「播放跳集」排查时的逐项对照 |
+| [woshishiq1/drpys](https://github.com/woshishiq1/drpys) | **vendored 上游** —— `vendor/hongguo.cjs` 的原始出处（GPL-3.0） |
+
 来源链：
 
 ```
