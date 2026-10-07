@@ -4,6 +4,18 @@
 
 架构参照 [asdf17128/bili-webos](https://github.com/asdf17128/bili-webos)（React + Vite 前端 + webOS JS Service 后端 + 本机媒体代理），数据接口参照 [N3urda/hongguoTV](https://github.com/N3urda/hongguoTV)（其 `server/vendor/hongguo.cjs` 源自 drpys 项目，GPL-3.0）。
 
+## 安装包下载
+
+不想自己构建的话，直接取已发布版本：
+
+**[⬇️ 下载最新 ipk](https://github.com/wymam/hongguo-webos/releases/latest)** —— 见 [Releases 页](https://github.com/wymam/hongguo-webos/releases)
+
+| 版本 | 文件 | 大小 | 校验（MD5） |
+|---|---|---|---|
+| v1.0.0 | `com.hongguowebos.app_1.0.0_all.ipk` | 159,596 bytes | `99291f3258bc0388ce4e3d32f37fbf57` |
+
+安装方式见下方「部署机制」章节（需先在电视上开启 Developer Mode）。
+
 ---
 
 ## 为什么最低只支持 webOS 6+
