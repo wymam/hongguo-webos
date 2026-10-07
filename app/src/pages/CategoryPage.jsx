@@ -676,22 +676,52 @@ function BatchPager({ current, total, pageSpan, onPick }) {
 // FIRST/LAST always visible is deliberate — it is what makes the control read
 // as "there are N blocks" rather than "there are a few blocks near me".
 //
+// The ceiling is 16, not 7. The owner's call: "16页序号完全可以全部展现出来，
+// 超过16页再在前面有缩略" — sixteen numbers DO fit the row at a fixed size, so
+// showing every one of them beats hiding neighbours behind an ellipsis. Only
+// past 16 does the list get windowed, and the head is what collapses, so the
+// numbers near the viewer and the whole tail stay intact.
+//
+// Three zones, merged: {1}, {the viewer's neighbourhood}, {the tail run}.
+//
+//   total<=16        -> every number, no ellipsis
+//   current in tail  -> 1 … <tail>                       (one ellipsis)
+//   current below 3  -> 1 2..3 … <tail>                  (one ellipsis)
+//   current between  -> 1 … <around current> … <tail>    (two ellipses)
+//
+// The entry count is bounded at 1 + (2*NEI+1) + TAIL + 2 gaps = 17, so the row
+// is one line no matter how deep the category goes. Two ellipses in the middle
+// case is honest: there really are three separate zones on screen, and pretending
+// otherwise (by stretching the run leftwards to merge them) is what made an
+// earlier attempt grow to 55 chips at batch 50 of 100.
+//
 // Each entry carries a `slot`: the chip's COLUMN on the line. Gaps are plain
 // spans and do not take a column, so the chips stay densely numbered
 // 0..k-1 and Right/Left walk them without stepping over an ellipsis. That
 // matters because `useFocusable` addresses by (row, col) and the default is
 // (0, 0) — a chip whose col was left implicit would collide with the first one.
-function windowBatches(current, total, radius = 2) {
+const PAGER_FULL_MAX = 16;
+const PAGER_WINDOW_TAIL = 9;
+const PAGER_WINDOW_NEI = 2;
+
+function windowBatches(current, total) {
   const nums = [];
-  if (total <= 7) {
+  if (total <= PAGER_FULL_MAX) {
+    // Everything fits — show every batch number, no ellipsis at all.
     for (let n = 1; n <= total; n++) nums.push(n);
   } else {
-    const keep = new Set([1, total, current]);
-    for (let d = 1; d <= radius; d++) {
-      if (current - d >= 1) keep.add(current - d);
-      if (current + d <= total) keep.add(current + d);
-    }
-    Array.from(keep).sort((a, b) => a - b).forEach((n, i, arr) => {
+    const tailFrom = Math.max(2, total - PAGER_WINDOW_TAIL + 1);
+    const keep = new Set([1]);
+    for (let n = tailFrom; n <= total; n++) keep.add(n);
+
+    // The viewer's neighbourhood. When it reaches or overlaps the tail the two
+    // merge into one run (no second ellipsis); otherwise it stays its own zone.
+    const nFrom = Math.max(2, current - PAGER_WINDOW_NEI);
+    const nTo = Math.min(total, current + PAGER_WINDOW_NEI);
+    for (let n = nFrom; n <= Math.min(nTo, tailFrom - 1); n++) keep.add(n);
+
+    const sorted = Array.from(keep).sort((a, b) => a - b);
+    sorted.forEach((n, i, arr) => {
       if (i && n - arr[i - 1] > 1) nums.push(null);
       nums.push(n);
     });

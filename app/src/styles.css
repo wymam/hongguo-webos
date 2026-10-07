@@ -394,28 +394,40 @@ img { display: block; }
 }
 
 /* ---------- batch pager ---------- */
-/* The pager spans the full grid width. It used to sit as a left-packed row
-   with a lake of dead space to its right ("尽量填满整行，利用好整行空间"), so the
-   number buttons now SHARE the row: each takes an equal slice of whatever room
-   is left after the range label, and keeps taking it as the windowed list
-   grows or shrinks. */
+/* The pager sits under the grid on one line: the range label, then the batch
+   NUMBERS at a fixed size, left-packed.
+ *
+ * It used to stretch: each number took an equal slice of the whole row, so two
+ * numbers became two enormous slabs and sixteen became sixteen slivers. Neither
+ * is a button anyone wants to aim a remote at. The numbers now keep a fixed,
+ * comfortable size and the row simply ends where it ends — the dead space to
+ * the right is fine, it is just space.
+ *
+ * Sixteen fits comfortably at this size (measured: ~90px per chip on the TV),
+ * which is why `windowBatches` shows all of them up to 16 and only starts
+ * collapsing the head past that. */
 .batch-pager { display: flex; align-items: center; gap: 20px; flex-wrap: nowrap; width: 100%; }
 .batch-span { color: var(--tv-secondary); font-size: calc(18px * var(--ui-scale)); white-space: nowrap; flex: 0 0 auto; }
-/* `flex: 1 1 0` with `min-width: 0` so the buttons divide the row EVENLY.
-   Without `min-width: 0` a number's min-content width floors its basis and the
-   row stops being uniform — one "12" would be wider than its neighbours. */
-.batch-list { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; }
-/* Number buttons share the row rather than sitting at a fixed small size.
-   The row still has to stay one line even when a category runs to a dozen
-   blocks, which `windowBatches` guarantees by windowing the list. */
+.batch-list { display: flex; align-items: center; flex: 0 0 auto; }
+/* A FIXED width, not a share of the row. `flex: 0 0 auto` plus a width is what
+   keeps 1 and 16 the same size, so the strip reads as a row of buttons rather
+   than a bar chart of batch counts.
+ *
+ * The width must clear TWO digits at this font size or "15"/"16" push past the
+ * box, widen themselves, and wrap the tail onto a second line (measured on the
+ * TV: 58px held "9" but not "15"). 76px is the measured two-digit fit plus
+ * breathing room, and `box-sizing: border-box` keeps the padding inside it. */
 .page-chip {
-  flex: 1 1 0;
-  min-width: 0;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  min-width: calc(76px * var(--ui-scale));
+  width: calc(76px * var(--ui-scale));
   margin-right: 8px;
   text-align: center;
   border-radius: 12px;
   padding: calc(7px * var(--ui-scale)) 0;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .page-chip:last-child { margin-right: 0; }
 /* Where the viewer IS. Distinct from the genre strip's `.active` (a filter

@@ -1,10 +1,16 @@
-// Local (headless) check that the batch pager FILLS its row.
+// Local (headless) check that the batch pager uses a FIXED, comfortable size.
 //
-// The owner asked for the page numbers to use the whole line ("最下面的选页
-// 序号，尽量填满整行，利用好整行空间"). The pager is built from the live DOM,
-// so the assertion is geometric: the number row must consume essentially all
-// the width available to the grid, and the buttons must be uniform — an equal
-// share each, not a fixed small pill with slack to the right.
+// History: this file used to assert the opposite. The owner first asked for the
+// numbers to fill the line ("尽量填满整行，利用好整行空间"), so the chips were made
+// to stretch. On the TV that read badly — a handful of numbers became enormous
+// slabs. The owner then clarified: "不是这样无限拉大，位置是有的，16页序号完全可以
+// 全部展现出来" — there IS room, sixteen numbers fit at a normal size, so stop
+// stretching and just show them.
+//
+// The assertions below therefore check for a fixed size, NOT full-fill:
+//   * every chip is the same width (a button, not a bar chart)
+//   * that width is in a sane band (not a sliver, not a slab)
+//   * sixteen chips fit inside the row without wrapping or overflowing
 //
 // Usage: node tools/local-pager-fill.js
 
@@ -78,32 +84,40 @@ function probeScript() {
       var chips = [].slice.call(pager.querySelectorAll('.page-chip'));
       if (!list || !chips.length) return { pagerPresent: true, error: 'no chips' };
 
-      // What the grid can use: the pager sits inside the same scroll area, so
-      // its own client width IS the usable width.
       var avail = pager.clientWidth;
-      var span = pager.querySelector('.batch-span');
       var listRect = list.getBoundingClientRect();
       var pagerRect = pager.getBoundingClientRect();
+      var grid = document.querySelector('.video-grid');
+      var gridWidth = grid ? Math.round(grid.getBoundingClientRect().width) : 0;
 
       var widths = chips.map(function (c) { return Math.round(c.getBoundingClientRect().width); });
       var min = Math.min.apply(null, widths);
       var max = Math.max.apply(null, widths);
+      var span = pager.querySelector('.batch-span');
+      var spanWidth = span ? Math.round(span.getBoundingClientRect().width) : 0;
+
+      // Simulate a 16-batch row: the width sixteen fixed chips + their gaps
+      // would need, and whether that still fits beside the label.
+      var gap = 8;
+      var sixteen = 16 * max + 15 * gap;
 
       return {
         pagerPresent: true,
         pagerWidth: Math.round(pagerRect.width),
+        gridWidth: gridWidth,
         listWidth: Math.round(listRect.width),
-        spanWidth: span ? Math.round(span.getBoundingClientRect().width) : 0,
-        availableForList: avail - (span ? Math.round(span.getBoundingClientRect().width) : 0),
+        spanWidth: spanWidth,
+        roomForChips: Math.round(avail - spanWidth - 20),
         chipCount: chips.length,
         chipMin: min,
         chipMax: max,
-        // How much of the row the numbers actually use. The list is the
-        // flexible part; if it fills, the row has no dead space on the right.
-        listFillPct: avail ? Math.round((listRect.width / avail) * 100) : 0,
         uniform: max - min <= 2,
-        // Right edge of the last button vs the pager's right edge.
-        rightGap: Math.round(pagerRect.right - chips[chips.length - 1].getBoundingClientRect().right)
+        // How much of the row the numbers use. With a FIXED size this is
+        // naturally well under 100% — that is the point, not a defect.
+        listFillPct: avail ? Math.round((listRect.width / avail) * 100) : 0,
+        rightGap: Math.round(pagerRect.right - chips[chips.length - 1].getBoundingClientRect().right),
+        sixteenNeeds: Math.round(sixteen),
+        sixteenFits: sixteen <= (avail - spanWidth - 20)
       };
     }
 
@@ -172,10 +186,13 @@ window.addEventListener('load', function () {
 
     const checks = [
       ['pager rendered', !!result.pagerPresent],
-      ['numbers fill the row (>= 90%)', result.listFillPct >= 90],
-      ['buttons are uniform', !!result.uniform],
-      ['no dead space at the right edge (<= 24px)', result.rightGap !== undefined && result.rightGap <= 24],
-      ['more than one number', (result.chipCount || 0) >= 2]
+      ['more than one number', (result.chipCount || 0) >= 2],
+      ['chips are a FIXED size (not stretched)', !!result.uniform],
+      // ~58px logical at 1920 wide is the target; allow a wide band so local
+      // font metrics (which differ from the TV's) cannot make this flaky.
+      ['chip width in a sane band (40-200px)', result.chipMax >= 40 && result.chipMax <= 200],
+      ['row is NOT stretched to the edges (fill < 80%)', result.listFillPct < 80],
+      ['sixteen numbers fit the row', !!result.sixteenFits]
     ];
     console.log('\n--- assertions ---');
     let failed = 0;
