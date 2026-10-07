@@ -27,6 +27,7 @@ var url = require('url');
 
 var providerMod = require('./provider');
 var provider = providerMod.provider;
+var auth = require('./auth');
 
 var SERVICE_ID = 'com.hongguowebos.app.service';
 
@@ -175,6 +176,126 @@ service.register('ping', function (message) {
     node: process.version,
     uptime: Math.round(process.uptime())
   });
+});
+
+// ---------- 扫码登录（抖音 / 番茄 App） ----------
+
+service.register('qrStart', function (message) {
+  reply(message, auth.qrStart());
+});
+
+service.register('qrPoll', function (message) {
+  var p = message.payload || {};
+  var token = String(p.token || '').trim();
+  if (!token) {
+    message.respond({ returnValue: false, errorCode: 'BAD_INPUT', errorText: '缺少登录 token' });
+    return;
+  }
+  reply(message, auth.qrPoll(token));
+});
+
+service.register('qrFinalize', function (message) {
+  var p = message.payload || {};
+  var redirectUrl = String(p.redirectUrl || '').trim();
+  reply(message, auth.qrFinalize(redirectUrl));
+});
+
+service.register('qrStatus', function (message) {
+  reply(message, auth.qrStatus());
+});
+
+service.register('qrLogout', function (message) {
+  message.respond(Object.assign({ returnValue: true }, auth.qrLogout()));
+});
+
+// ---------- 播放性能诊断 ----------
+// Measure where a playback slowdown comes from: the network (download MB/s),
+// the CPU (decrypt MB/s) or both (end-to-end chunk MB/s). A TV has a weak CPU
+// and the CDN throttles, so before "optimising" blindly we quantify each leg.
+var BENCH_SEGMENTS = 6;
+var BENCH_DECRYPT_PASSES = 12;
+
+function benchMedia(episodeId) {
+  var MB = 1024 * 1024;
+  var t0 = Date.now();
+  return provider.stream(episodeId, false).then(function (h) {
+    var total = h.total || 0;
+    // Start well inside mdat so the sample is actually encrypted (moov is
+    // plaintext and would flatter the decrypt number).
+    var start = Math.min(Math.max(Math.floor(total * 0.4), MB), Math.max(0, total - MB * (BENCH_SEGMENTS + 1)));
+    start = Math.floor(start / MB) * MB;
+    if (start + MB > total) start = Math.max(0, total - MB * (BENCH_SEGMENTS + 1));
+
+    // 1) download-only throughput
+    var dlT0 = Date.now();
+    var seq = Promise.resolve();
+    var firstRaw = null;
+    for (var i = 0; i < BENCH_SEGMENTS; i++) {
+      (function (off) {
+        seq = seq.then(function () {
+          return h.rawChunk(off, Math.min(off + MB - 1, total - 1)).then(function (raw) {
+            if (firstRaw === null) firstRaw = Buffer.from(raw);
+            return raw.length;
+          });
+        });
+      })(start + i * MB);
+    }
+    return seq.then(function () {
+      var dlMs = Date.now() - dlT0;
+      var dlMBps = (BENCH_SEGMENTS * MB / (dlMs || 1)) / 1024;
+
+      // 2) decrypt-only throughput (re-decrypt the same 1MiB repeatedly)
+      var decT0 = Date.now();
+      var decBytes = 0;
+      var payload = firstRaw || Buffer.alloc(MB);
+      for (var p = 0; p < BENCH_DECRYPT_PASSES; p++) {
+        h.decrypt(payload, start);
+        decBytes += payload.length;
+      }
+      var decMs = Date.now() - decT0;
+      var decMBps = (decBytes / (decMs || 1)) / 1024;
+
+      // 3) end-to-end chunk throughput (network + decrypt together)
+      var e2eT0 = Date.now();
+      var e2eSeq = Promise.resolve();
+      for (var j = 0; j < BENCH_SEGMENTS; j++) {
+        (function (off) {
+          e2eSeq = e2eSeq.then(function () {
+            return h.chunk(off, Math.min(off + MB - 1, total - 1)).then(function (c) { return c.length; });
+          });
+        })(start + j * MB);
+      }
+      return e2eSeq.then(function () {
+        var e2eMs = Date.now() - e2eT0;
+        var e2eMBps = (BENCH_SEGMENTS * MB / (e2eMs || 1)) / 1024;
+
+        return {
+          episodeId: episodeId,
+          total: total,
+          quality: h.quality,
+          keyed: h.keyed,
+          segments: BENCH_SEGMENTS,
+          downloadMBps: Math.round(dlMBps * 100) / 100,
+          downloadMs: dlMs,
+          decryptMBps: Math.round(decMBps * 100) / 100,
+          decryptMs: decMs,
+          endToEndMBps: Math.round(e2eMBps * 100) / 100,
+          endToEndMs: e2eMs,
+          totalMs: Date.now() - t0
+        };
+      });
+    });
+  });
+}
+
+service.register('benchMedia', function (message) {
+  var p = message.payload || {};
+  var ep = String(p.episodeId || '').trim();
+  if (!/^\d{1,30}$/.test(ep)) {
+    message.respond({ returnValue: false, errorCode: 'BAD_INPUT', errorText: '缺少 episodeId' });
+    return;
+  }
+  reply(message, benchMedia(ep));
 });
 
 service.register('getDiagnostics', function (message) {
@@ -370,7 +491,9 @@ function mediaServerHandler(req, res) {
     }
 
     // Clamp any request to one segment so a pathological Range cannot ask us
-    // to decrypt tens of megabytes in a single response.
+    // to decrypt tens of megabytes in a single response. An absent Range also
+    // gets the first segment as a 206 (the player then Range-requests the rest
+    // at its own pace).
     var start;
     var end;
     if (requested) {

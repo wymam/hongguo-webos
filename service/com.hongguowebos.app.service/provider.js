@@ -692,6 +692,16 @@ var provider = {
               return remoteRangeResilient(a, stream, start, end).then(function (remote) {
                 return a.decryptPartial(remote.data, start, stream.key, prepared);
               });
+            },
+            // Diagnostics only: split the two halves of `chunk` so a slowdown
+            // can be attributed to the network (rawChunk) or the CPU (decrypt).
+            rawChunk: function (start, end) {
+              return remoteRangeResilient(a, stream, start, end).then(function (remote) {
+                return remote.data;
+              });
+            },
+            decrypt: function (data, start) {
+              return a.decryptPartial(data, start, stream.key, prepared);
             }
           };
         });

@@ -169,6 +169,28 @@ export async function getDiagnostics() {
   return invoke('getDiagnostics', {}, 20000);
 }
 
+// ---------- 播放性能诊断 ----------
+export async function benchMedia(episodeId) {
+  return invoke('benchMedia', { episodeId: String(episodeId) }, 120000);
+}
+
+// ---------- 扫码登录 ----------
+export async function qrStart() {
+  return invoke('qrStart', {}, 20000);
+}
+export async function qrPoll(token) {
+  return invoke('qrPoll', { token: String(token) }, 15000);
+}
+export async function qrFinalize(redirectUrl) {
+  return invoke('qrFinalize', { redirectUrl: String(redirectUrl || '') }, 20000);
+}
+export async function qrStatus() {
+  return invoke('qrStatus', {}, 15000);
+}
+export async function qrLogout() {
+  return invoke('qrLogout', {}, 10000);
+}
+
 // The URL the TV player consumes. Range requests are handled by the service.
 export function mediaUrl(episodeId) {
   return `http://127.0.0.1:${mediaPort}/media/${episodeId}`;
@@ -186,6 +208,12 @@ if (typeof window !== 'undefined') {
     getDetail,
     getAspects,
     getDiagnostics,
+    benchMedia,
+    qrStart,
+    qrPoll,
+    qrFinalize,
+    qrStatus,
+    qrLogout,
     mediaUrl,
     getMediaPort
   };

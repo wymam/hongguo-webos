@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { useFocusable, setContentContext, resetContentMemory } from '../hooks/useFocus';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useFocusable, setContentContext, resetContentMemory, onFocusChange } from '../hooks/useFocus';
 import { Loading } from '../components/Common';
 import { getSettings, setSettings, nextCols, GRID_COLUMN_CHOICES } from '../utils/storage';
-import { getDiagnostics, isDevMode, hasLunaService } from '../api/client';
+import { getDiagnostics, isDevMode, hasLunaService, qrStart, qrPoll, qrFinalize, qrStatus, qrLogout } from '../api/client';
 
 // Settings and on-device diagnostics.
 //
@@ -14,6 +14,106 @@ export default function SettingsPage({ toast, refreshKey }) {
   const [settings, setLocal] = useState(() => getSettings());
   const [diag, setDiag] = useState(null);
   const [diagError, setDiagError] = useState('');
+
+  // ---------- 账号登录 ----------
+  const [account, setAccount] = useState(null);          // { id, name, avatar, isVip } | null
+  const [accountChecking, setAccountChecking] = useState(true);
+  const [qr, setQr] = useState(null);                     // { qrcode, message, token }
+  const pollTimer = useRef(0);
+
+  const stopPolling = useCallback(() => {
+    if (pollTimer.current) { clearInterval(pollTimer.current); pollTimer.current = 0; }
+  }, []);
+
+  const beginPolling = useCallback((token) => {
+    stopPolling();
+    pollTimer.current = setInterval(() => {
+      qrPoll(token)
+        .then((res) => {
+          if (!res || res.returnValue === false) return;
+          const status = String(res.status || '');
+          if (/confirm|success|done|ok|accept/i.test(status) || res.redirectUrl) {
+            stopPolling();
+            setQr((q) => ({ ...(q || {}), message: '已确认，正在完成登录…' }));
+            qrFinalize(res.redirectUrl || '')
+              .then((r) => {
+                if (r && r.id) {
+                  setAccount({ id: r.id, name: r.name, avatar: r.avatar, isVip: r.isVip });
+                  setQr(null);
+                  if (toast) toast(`登录成功：${r.name}`);
+                } else {
+                  setQr({ message: '未能建立会话，请重试' });
+                }
+              })
+              .catch(() => setQr({ message: '登录失败，请重试' }));
+          } else if (/scan/i.test(status)) {
+            setQr((q) => ({ ...(q || {}), message: '已扫码，请在手机上点击「确认登录」' }));
+          }
+        })
+        .catch(() => { /* 网络抖动，继续轮询 */ });
+    }, 2000);
+  }, [stopPolling, toast]);
+
+  const startLogin = useCallback(() => {
+    setQr({ message: '正在获取二维码…' });
+    qrStart()
+      .then((res) => {
+        if (!res || res.returnValue === false) throw new Error(res && res.errorText);
+        setQr({ token: res.token, qrcode: res.qrcode, message: '请用「番茄小说 App」扫码' });
+        beginPolling(res.token);
+      })
+      .catch((e) => setQr({ message: '获取二维码失败：' + (e && e.message) }));
+  }, [beginPolling]);
+
+  const doLogout = useCallback(() => {
+    stopPolling();
+    setQr(null);
+    qrLogout().then(() => {
+      setAccount(null);
+      if (toast) toast('已退出登录');
+    });
+  }, [stopPolling, toast]);
+
+  // 进入页面时查询登录态；卸载时停止轮询。
+  useEffect(() => {
+    qrStatus()
+      .then((res) => {
+        if (res && res.loggedIn) setAccount(res.user);
+      })
+      .finally(() => setAccountChecking(false));
+    return stopPolling;
+  }, [stopPolling]);
+
+  // The settings viewport (.config-options) can overflow — diagnostics plus
+  // the account panel sit deep in the column. `overflow: hidden` used to CLIP
+  // the login QR code in half (nothing below the fold was reachable), so the
+  // viewport now scrolls and the focus ring is what pulls it along: every
+  // focus move inside this page brings the focused row into view.
+  const viewportRef = useRef(null);
+  useEffect(() => {
+    const off = onFocusChange((id) => {
+      const vp = viewportRef.current;
+      if (!vp || !id || String(id).indexOf('settings-') !== 0) return;
+      const el = document.querySelector('[data-focus-id="' + id + '"]');
+      if (el && vp.contains(el)) {
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    });
+    return off;
+  }, []);
+
+  // The QR code is the ONE thing the user must see in full to proceed. When it
+  // appears, align the panel's BOTTOM edge with the viewport's — 'center'
+  // leaves the 取消登录 button just below the fold, and 'nearest' would not
+  // undo an already half-clipped position.
+  const qrPanelRef = useRef(null);
+  useEffect(() => {
+    if (!qr || !qr.qrcode || !qrPanelRef.current) return;
+    const t = setTimeout(() => {
+      qrPanelRef.current.scrollIntoView({ block: 'end', behavior: 'smooth' });
+    }, 60);
+    return () => clearTimeout(t);
+  }, [qr && qr.qrcode]);
 
   useEffect(() => {
     // The second argument MATTERS: this page's controls are group 'settings',
@@ -54,7 +154,7 @@ export default function SettingsPage({ toast, refreshKey }) {
         <p>调整浏览体验，并查看服务运行状态。所有设置立即生效并保存在本机。</p>
       </div>
 
-      <div className="config-options">
+      <div className="config-options" ref={viewportRef}>
         <div className="config-section-title">浏览</div>
 
         {/* Rows are numbered DOWN the column, not across it.
@@ -150,6 +250,42 @@ export default function SettingsPage({ toast, refreshKey }) {
             刷新诊断信息
           </ActionButton>
         </div>
+
+        <div className="config-section-title" style={{ marginTop: 40 }}>
+          账号
+        </div>
+
+        {account ? (
+          <div>
+            <div className="settings-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span>已登录</span>
+              <span className="settings-row-value">{account.name}{account.isVip ? ' · 会员' : ''}</span>
+            </div>
+            <div style={{ marginTop: 16 }}>
+              <ActionButton id="settings-4-0" row={4} onSelect={doLogout}>退出登录</ActionButton>
+            </div>
+          </div>
+        ) : qr ? (
+          <div className="qr-panel" ref={qrPanelRef}>
+            {qr.qrcode ? <img className="qr-code" src={`data:image/png;base64,${qr.qrcode}`} alt="登录二维码" /> : null}
+            <div className="qr-message">{qr.message}</div>
+            <div className="qr-help">
+              打开番茄小说 App → 右下角「我的」→ 右上角「扫一扫」图标，对准本二维码即可。
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <ActionButton id="settings-4-0" row={4} onSelect={stopPolling}>取消登录</ActionButton>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div style={{ color: 'var(--tv-secondary)', fontSize: 18, lineHeight: 1.9, marginBottom: 14 }}>
+              登录后可同步手机端播放记录（开发中）。扫码走红果官网同源接口，用「番茄小说 App」的扫一扫确认。
+            </div>
+            <ActionButton id="settings-4-0" row={4} onSelect={startLogin}>
+              {accountChecking ? '正在检查登录状态…' : '扫码登录'}
+            </ActionButton>
+          </div>
+        )}
 
         <div className="config-section-title" style={{ marginTop: 40 }}>
           关于

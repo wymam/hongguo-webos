@@ -571,7 +571,13 @@ img { display: block; }
 /* Two columns so the option rows and the diagnostic block share the screen
    without scrolling — a TV has no scrollbar the user can reach. Section
    titles and the diagnostic report span both columns; everything else flows
-   into the first available cell. */
+   into the first available cell.
+
+   overflow-y: auto — the page DID overflow (diagnostics + the account panel
+   sit deep in the column), and `hidden` simply CLIPPED whatever fell below
+   the fold: the login QR code rendered half-visible and could not be scanned.
+   A TV cannot drag a scrollbar, but it does not need one — the focus ring
+   scrollIntoView()s its way down (see SettingsPage). */
 .config-options {
   flex: 1 1 auto; min-height: 0;
   display: grid;
@@ -579,6 +585,7 @@ img { display: block; }
   grid-column-gap: 48px;
   grid-auto-rows: min-content;
   align-content: start;
+  overflow-y: auto;
 }
 
 .config-section-title {
@@ -604,6 +611,28 @@ img { display: block; }
   margin-left: 14px; letter-spacing: 1px;
 }
 .settings-row-value { color: var(--tv-secondary); font-size: calc(20px * var(--ui-scale)); }
+
+/* 扫码登录 */
+.qr-panel {
+  display: flex; flex-direction: column; align-items: flex-start;
+  padding: 18px 22px; background: var(--tv-card); border-radius: 12px;
+}
+.qr-code {
+  width: 320px; height: 320px; image-rendering: pixelated;
+  background: #fff; border-radius: 10px; margin-bottom: 14px;
+}
+.qr-message {
+  color: var(--tv-secondary); font-size: calc(19px * var(--ui-scale)); line-height: 1.6;
+}
+.qr-help {
+  color: var(--tv-muted); font-size: calc(16px * var(--ui-scale)); line-height: 1.7;
+  margin-top: 6px; max-width: 420px;
+}
+
+/* TV pages hide scrollbars wholesale (see .scroll-area rules); keep the
+   settings viewport consistent with that. */
+.config-options::-webkit-scrollbar { display: none; }
+
 
 .diagnostic-report {
   grid-column: 1 / -1;
