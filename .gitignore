@@ -18,3 +18,4 @@ app/dist/
 .DS_Store
 Thumbs.db
 *.log
+tools/_push_manifest.json
