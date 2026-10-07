@@ -133,8 +133,16 @@ export async function getHome() {
 // `minItems` exists because upstream paginates at 24 — barely three rows — so a
 // "page" was over before the viewer had scrolled. The service keeps pulling the
 // following pages until the screen holds a real list (>= 50).
-export async function getCategory(key, page = 1, genre = '', minItems = 50) {
-  return invoke('getCategory', { key, page, genre, minItems }, 45000);
+// `page` + `skip` address the FIRST item of the batch: item `skip` of upstream
+// page `page`. The service returns exactly `minItems` items and reports where
+// the NEXT batch starts (`nextPage` / `nextSkip`), so batches tile the
+// catalogue with no gap and no repeat.
+//
+// Why not just a page number: upstream paginates at 24 and a batch is 50, so
+// 50 never lands on a page boundary. Asking for "page 4" would either re-show
+// the 22 items the previous batch could not fit, or skip them.
+export async function getCategory(key, page = 1, genre = '', minItems = 50, skip = 0) {
+  return invoke('getCategory', { key, page, genre, minItems, skip }, 45000);
 }
 
 // Portrait/landscape for a batch of series, read from the video itself.

@@ -394,20 +394,30 @@ img { display: block; }
 }
 
 /* ---------- batch pager ---------- */
-/* The pager replaces the old 上一批 / 下一批 pair with the batch NUMBERS, so a
-   viewer can jump straight to a later block instead of stepping through it. */
-.batch-pager { display: flex; align-items: center; gap: 20px; flex-wrap: nowrap; }
-.batch-span { color: var(--tv-secondary); font-size: calc(18px * var(--ui-scale)); white-space: nowrap; }
-.batch-list { display: flex; align-items: center; }
-/* Square-ish number buttons rather than wide pills: the row has to stay one
-   line even when a category runs to a dozen blocks. */
+/* The pager spans the full grid width. It used to sit as a left-packed row
+   with a lake of dead space to its right ("尽量填满整行，利用好整行空间"), so the
+   number buttons now SHARE the row: each takes an equal slice of whatever room
+   is left after the range label, and keeps taking it as the windowed list
+   grows or shrinks. */
+.batch-pager { display: flex; align-items: center; gap: 20px; flex-wrap: nowrap; width: 100%; }
+.batch-span { color: var(--tv-secondary); font-size: calc(18px * var(--ui-scale)); white-space: nowrap; flex: 0 0 auto; }
+/* `flex: 1 1 0` with `min-width: 0` so the buttons divide the row EVENLY.
+   Without `min-width: 0` a number's min-content width floors its basis and the
+   row stops being uniform — one "12" would be wider than its neighbours. */
+.batch-list { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; }
+/* Number buttons share the row rather than sitting at a fixed small size.
+   The row still has to stay one line even when a category runs to a dozen
+   blocks, which `windowBatches` guarantees by windowing the list. */
 .page-chip {
-  min-width: calc(46px * var(--ui-scale));
+  flex: 1 1 0;
+  min-width: 0;
+  margin-right: 8px;
   text-align: center;
   border-radius: 12px;
   padding: calc(7px * var(--ui-scale)) 0;
   font-variant-numeric: tabular-nums;
 }
+.page-chip:last-child { margin-right: 0; }
 /* Where the viewer IS. Distinct from the genre strip's `.active` (a filter
    that is applied) — this is a location, and it keeps the accent even when it
    does not hold the ring. */
@@ -416,9 +426,12 @@ img { display: block; }
   font-weight: 700;
 }
 .page-chip.current.focused { transform: scale(1.08); }
+/* The ellipsis is a marker, not a button: it must NOT take a share of the row,
+   or the numbers either side of it would drift out of alignment. */
 .batch-gap {
   color: var(--tv-muted); font-size: calc(20px * var(--ui-scale));
   padding: 0 6px; user-select: none;
+  flex: 0 0 auto;
 }
 
 /* ---------- category header ---------- */
@@ -438,6 +451,22 @@ img { display: block; }
 .category-current {
   color: var(--tv-focus); font-weight: 700; font-size: calc(22px * var(--ui-scale));
   padding: 2px 14px; border: 2px solid var(--tv-focus); border-radius: 22px;
+}
+/* Inline load/error cues. Loading a genre or a batch keeps the screen mounted
+   (so focus survives), which means the wait has to be reported SOMEHOW — this
+   is that "somehow". A quiet pulse reads as activity without drawing the eye
+   away from the grid. */
+.category-busy {
+  color: var(--tv-secondary); font-size: calc(18px * var(--ui-scale));
+  animation: category-pulse 1.1s ease-in-out infinite;
+}
+.category-error { color: var(--tv-accent); font-size: calc(18px * var(--ui-scale)); }
+@keyframes category-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .category-busy { animation: none; }
 }
 
 /* ---------- episodes ---------- */

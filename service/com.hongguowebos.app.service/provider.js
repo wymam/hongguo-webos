@@ -227,6 +227,48 @@ function categoryPageData(data) {
   return ld['category_$'] || ld.category_page || ld.categoryRoute || null;
 }
 
+// One upstream category page, memoised for the life of the service.
+//
+// This exists for two reasons, and both are about the viewer's wait:
+//
+//   1. SPEED. A batch fans out over several upstream pages at once, and the
+//      page that overruns the 50-item cut is partly shown in THIS batch and
+//      partly in the NEXT one. Without a cache, stepping forward re-fetches
+//      that boundary page from scratch. With one, the boundary page (and any
+//      page already seen while paging around) is free.
+//
+//   2. STABILITY. The upstream list shifts under us between requests. Re-using
+//      the page that was measured a moment ago keeps the de-dup and the
+//      50-item cut aligned with what the viewer is looking at, instead of
+//      silently reshuffling the screen they just left.
+//
+// Keyed by route AND page, so a genre change (different route) never reads a
+// stale page. The TTL is short on purpose: long enough to cover a browsing
+// session's back-and-forth, short enough that a returning viewer sees fresh
+// content rather than a snapshot from an hour ago.
+var CATEGORY_PAGE_TTL_MS = 5 * 60 * 1000;
+var categoryPageCache = {};
+
+function fetchCategoryPage(a, route, n) {
+  var key = route + '#' + n;
+  var hit = categoryPageCache[key];
+  if (hit && Date.now() - hit.at < CATEGORY_PAGE_TTL_MS) return Promise.resolve(hit.value);
+  return a.routerData(categoryUrl(route, n)).then(function (data) {
+    var pageData = categoryPageData(data);
+    if (!pageData || !Array.isArray(pageData.recommendList)) {
+      throw new Error('分类数据结构已变化');
+    }
+    var value = {
+      items: rowsToCards(pageData.recommendList),
+      filters: filtersFromCategory(pageData),
+      pagination: paginationFromCategory(pageData),
+      page: n
+    };
+    categoryPageCache[key] = { at: Date.now(), value: value };
+    return value;
+  });
+}
+
 // ---------- resilient upstream range fetching ----------
 //
 // WHY THIS EXISTS
@@ -482,92 +524,142 @@ var provider = {
   // `genre` is an optional selector_item_id (e.g. 'romance') which maps to a
   // sub-route /category/<route>/<genre>.
   //
-  // MIN ITEMS PER SCREEN: upstream paginates at 24, which is under four rows at
-  // the default column count — the viewer hits "next page" almost immediately
-  // and browsing feels like a slot machine. `minItems` (default 50) keeps
-  // pulling following pages until the screen has a real list to scroll, or the
-  // category runs out. The pages actually consumed are reported back so the UI
-  // can offer "next batch" from where we stopped rather than +1.
-  category: function (key, page, genre, minItems) {
+  // A BATCH IS A SCREEN, AND A SCREEN IS EXACTLY `minItems` (50) ITEMS.
+  //
+  // Upstream paginates at 24, which is under five rows — the viewer hit "next
+  // page" almost immediately and browsing felt like a slot machine. So a batch
+  // collects consecutive upstream pages and returns exactly `minItems`, which
+  // at the default 5-column grid is a perfectly full 10 rows with no ragged
+  // tail ("每页剧集每行5个，一共10行 50个").
+  //
+  // BATCHES TILE: 50 is never a multiple of 24, so page-aligned batches cannot
+  // line up with the 50-item screen. The batch therefore STARTS at
+  // (page, skip) — item `skip` of upstream page `page` — and reports where the
+  // next one starts. The UI echoes those coordinates back. Without the skip,
+  // the 22 items that straddle the cut would be either repeated on every
+  // screen or silently dropped.
+  //
+  // SPEED: the pages a batch spans are fetched CONCURRENTLY. The first page is
+  // fetched alone (it is the only way to learn the upstream page size and total
+  // page count), then the rest are issued in one `Promise.all` rather than
+  // chained. Three sequential round trips to the upstream is the visible
+  // "waiting for 剧集" delay; one round trip plus fan-out is close to a third
+  // of it.
+  category: function (key, page, genre, minItems, skip) {
     page = page || 1;
+    skip = Number(skip) > 0 ? Number(skip) : 0;
     minItems = Number(minItems) > 0 ? Number(minItems) : 50;
     var a = loadUpstream();
     var entry = CATEGORY_ROUTES[key] || CATEGORY_ROUTES.real;
     var route = entry.route + (genre ? '/' + genre : '');
 
     function fetchPage(n) {
-      return a.routerData(categoryUrl(route, n)).then(function (data) {
-        var pageData = categoryPageData(data);
-        if (!pageData || !Array.isArray(pageData.recommendList)) {
-          throw new Error('分类数据结构已变化');
-        }
-        return {
-          items: rowsToCards(pageData.recommendList),
-          filters: filtersFromCategory(pageData),
-          pagination: paginationFromCategory(pageData),
-          page: n
-        };
-      });
+      return fetchCategoryPage(a, route, n);
     }
 
     // Upstream pages are 24 each, so 50 needs three of them. The cap stops a
     // pathological `minItems` (or a category whose rows fail our shape filter)
-    // from walking the whole 34-page catalogue.
-    var MAX_PAGES_PER_BATCH = 5;
-    var collected = [];
-    var seen = {};
-    var pages = [];
-    var head = null;
+    // from walking the whole catalogue.
+    var MAX_PAGES_PER_BATCH = 6;
 
-    function pull(n) {
-      // `head` carries the upstream's own page count, which is only known AFTER
-      // the first fetch. Guarding on it therefore has to treat "not fetched
-      // yet" as "unknown", not as 1 — the previous expression
-      // (`head ? head.pagination.totalPages : 1`) compared the REQUESTED page
-      // against 1 on the very first call, so any batch that did not start at
-      // page 1 returned immediately with nothing collected and surfaced as
-      // 分类数据为空. That is why jumping to a later batch failed while "first"
-      // always worked.
-      if (head && n > head.pagination.totalPages) return Promise.resolve();
-      if (pages.length >= MAX_PAGES_PER_BATCH) return Promise.resolve();
-      return fetchPage(n).then(function (res) {
-        if (!head) head = res;
-        pages.push(n);
-        for (var i = 0; i < res.items.length; i++) {
-          var it = res.items[i];
-          // The same series can appear on two pages when the upstream list
-          // shifts underneath us; a de-dup by id keeps the count honest.
-          if (seen[it.id]) continue;
-          seen[it.id] = 1;
-          collected.push(it);
-        }
-        if (collected.length >= minItems) return null;
-        return pull(n + 1);
+    return fetchPage(page).then(function (first) {
+      if (!first) throw new Error('分类数据为空');
+      var pagination = first.pagination || {};
+      var perPage = pagination.pageSize > 0 ? pagination.pageSize : 24;
+      var totalPages = pagination.totalPages > 0 ? pagination.totalPages : 1;
+
+      // How many upstream pages this batch can possibly touch. `skip` eats into
+      // the first page, so account for it rather than assuming a whole page.
+      var usableFirst = Math.max(0, perPage - skip);
+      var pagesNeeded = Math.ceil(Math.max(0, minItems - usableFirst) / perPage) + 1;
+      pagesNeeded = Math.min(MAX_PAGES_PER_BATCH, Math.max(1, pagesNeeded));
+
+      var wanted = [];
+      for (var i = 1; i < pagesNeeded; i++) {
+        var n = page + i;
+        if (n > totalPages) break;
+        wanted.push(n);
+      }
+      if (!wanted.length) return [first];
+      // Fan out: these are independent, so the batch costs one round trip of
+      // latency (the first page, already done) plus one in parallel, instead
+      // of one per page.
+      return Promise.all(wanted.map(function (n) {
+        return fetchPage(n).catch(function () { return null; });
+      })).then(function (rest) {
+        return [first].concat(rest.filter(Boolean));
       });
-    }
-
-    return pull(page).then(function () {
+    }).then(function (pages) {
+      var head = pages[0];
       if (!head) throw new Error('分类数据为空');
       var pagination = head.pagination;
+      var totalPages = pagination.totalPages > 0 ? pagination.totalPages : 1;
+      var perPage = pagination.pageSize > 0 ? pagination.pageSize : 24;
+
+      var ordered = pages.slice().sort(function (x, y) { return x.page - y.page; });
+
+      // Walk the fetched pages IN ORDER, starting at (page, skip), keeping the
+      // upstream's own ordering and de-duplicating by id (the same series can
+      // appear on two pages when the upstream list shifts underneath us).
+      var shown = [];
+      var seen = {};
+      var cursorPage = page;
+      var cursorSkip = skip;
+      var exhausted = false;
+
+      for (var i = 0; i < ordered.length && shown.length < minItems; i++) {
+        var pg = ordered[i];
+        if (pg.page < page) continue;
+        var items = pg.items || [];
+        var from = pg.page === page ? skip : 0;
+        for (var k = from; k < items.length && shown.length < minItems; k++) {
+          var it = items[k];
+          cursorPage = pg.page;
+          cursorSkip = k + 1;
+          if (!it || !it.id || seen[it.id]) continue;
+          seen[it.id] = 1;
+          shown.push(it);
+        }
+        // The cursor ran off the end of this page: the next batch starts at
+        // the top of the following one.
+        if (cursorSkip >= items.length) {
+          cursorPage = pg.page + 1;
+          cursorSkip = 0;
+        }
+      }
+
+      // We stopped mid-page: the remainder of that page belongs to the next
+      // batch, which is exactly what (cursorPage, cursorSkip) addresses.
+      var atEnd = cursorPage > totalPages;
+      if (atEnd && shown.length === 0) throw new Error('分类数据为空');
+
+      var pagesFetched = [];
+      for (var c = 0; c < ordered.length; c++) {
+        if (ordered[c].page >= page) pagesFetched.push(ordered[c].page);
+      }
+
       return {
         key: key in CATEGORY_ROUTES ? key : 'real',
         name: entry.name,
         genre: genre || '',
-        items: collected,
+        items: shown,
         filters: head.filters,
         pagination: {
           total: pagination.total,
-          page: pages[0] || page,
+          page: page,
+          skip: skip,
           pageSize: pagination.pageSize,
           totalPages: pagination.totalPages,
-          // Which upstream pages this batch covers, so the UI can page by
-          // BATCH rather than by single page (which would re-show 24).
-          pagesFetched: pages.slice(),
-          nextPage: pages.length ? pages[pages.length - 1] + 1 : page + 1,
-          hasMore: !!pages.length && pages[pages.length - 1] < pagination.totalPages,
-          hasPrev: (pages[0] || page) > 1
+          // Which upstream pages this batch covers, for diagnostics.
+          pagesFetched: pagesFetched,
+          // Where the NEXT batch begins. The UI echoes these straight back, so
+          // batches tile the catalogue with no gap and no repeat.
+          nextPage: cursorPage,
+          nextSkip: cursorSkip,
+          hasMore: !atEnd,
+          hasPrev: page > 1 || skip > 0
         },
-        page: pages[0] || page
+        page: page
       };
     });
   },

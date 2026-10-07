@@ -122,7 +122,17 @@ service.register('getHome', function (message) {
 
 service.register('getCategory', function (message) {
   var p = message.payload || {};
-  reply(message, provider.category(p.key, toInt(p.page, 1), p.genre || '', toInt(p.minItems, 50)));
+  // `skip` is the index WITHIN page `page` at which the batch starts, so a
+  // batch of 50 can begin mid-page (upstream pages are 24). Without it the
+  // batches could not tile: 50 is never a multiple of 24, so page-aligned
+  // batches must either repeat or drop the items that straddle the cut.
+  reply(message, provider.category(
+    p.key,
+    toInt(p.page, 1),
+    p.genre || '',
+    toInt(p.minItems, 50),
+    toInt(p.skip, 0)
+  ));
 });
 
 // Portrait/landscape for a batch of series, from the MP4 itself.

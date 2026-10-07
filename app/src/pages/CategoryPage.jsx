@@ -52,18 +52,39 @@ import { getSettings, clampCols } from '../utils/storage';
 export default function CategoryPage({ categoryKey, categoryName, onOpenSeries, onLongPress, refreshKey }) {
   const [genre, setGenre] = useState('');
   const [page, setPage] = useState(1);
-  const [state, setState] = useState({ status: 'loading', items: [], filters: [], pagination: null, error: '' });
+  const [skip, setSkip] = useState(0);
+  const [state, setState] = useState({ status: 'loading', items: [], filters: [], pagination: null, busy: false, error: '' });
   const cols = clampCols(getSettings().gridCols);
 
+  // `keepItems` keeps the CURRENT screen mounted while the next one loads.
+  //
+  // This is not just cosmetic. Browsing a genre used to blank the whole page:
+  // `selectGenre` called `load(1, next, false)`, which set status to 'loading',
+  // which made this component `return <Loading/>` — unmounting the genre strip
+  // and the grid. Every focusable unregistered, `currentFocusId` went null, and
+  // the next D-pad press then hit the "nothing is focused" branch in the key
+  // handler, which calls `focusSidebar()`. The owner saw that as "按方向向下键
+  // 跳到了左边的菜单栏" — the focus had not moved down at all; it had been
+  // destroyed and the fallback had taken over.
+  //
+  // Keeping the previous screen mounted also removes the white flash, which is
+  // most of what "加载慢" feels like: the wait is the same, but the viewer is
+  // no longer staring at a replacement page while it happens.
   const load = useCallback(
-    (nextPage, nextGenre, keepItems) => {
+    (nextPage, nextGenre, keepItems, nextSkip) => {
       let alive = true;
-      setState((s) => ({ ...s, status: s.items.length && keepItems ? 'ready' : 'loading', error: '' }));
-      getCategory(categoryKey, nextPage, nextGenre, BATCH_MIN_ITEMS)
+      setState((s) => ({ ...s, status: s.items.length && keepItems ? 'ready' : 'loading', busy: !!keepItems, error: '' }));
+      getCategory(categoryKey, nextPage, nextGenre, BATCH_MIN_ITEMS, nextSkip || 0)
         .then((res) => {
           if (!alive) return;
           if (!res || res.returnValue === false) {
-            setState((s) => ({ ...s, status: 'error', error: (res && res.errorText) || '加载失败' }));
+            // A FAILED keepItems load must not blank the screen either: the
+            // viewer would lose the grid, the strip, and the focus with them —
+            // the exact failure this flag was introduced to fix. Keep what is
+            // on screen and surface the error as a status line instead.
+            setState((s) => (keepItems && s.items.length
+              ? { ...s, status: 'ready', busy: false, error: (res && res.errorText) || '加载失败' }
+              : { ...s, status: 'error', busy: false, error: (res && res.errorText) || '加载失败' }));
             return;
           }
           const items = Array.isArray(res.items) ? res.items : [];
@@ -72,12 +93,15 @@ export default function CategoryPage({ categoryKey, categoryName, onOpenSeries, 
             items,
             filters: Array.isArray(res.filters) ? res.filters : [],
             pagination: res.pagination || null,
+            busy: false,
             error: ''
           });
         })
         .catch((e) => {
           if (!alive) return;
-          setState((s) => ({ ...s, status: 'error', error: e.message || '网络错误' }));
+          setState((s) => (keepItems && s.items.length
+            ? { ...s, status: 'ready', busy: false, error: e.message || '网络错误' }
+            : { ...s, status: 'error', busy: false, error: e.message || '网络错误' }));
         });
       return () => {
         alive = false;
@@ -91,19 +115,26 @@ export default function CategoryPage({ categoryKey, categoryName, onOpenSeries, 
     resetContentMemory();
     setGenre('');
     setPage(1);
-    return load(1, '', false);
+    setSkip(0);
+    return load(1, '', false, 0);
   }, [load, categoryKey, refreshKey]);
 
   const selectGenre = (id) => {
     const next = genre === id ? '' : id;
     setGenre(next);
+    setSkip(0);
     setPage(1);
-    load(1, next, false);
+    // Keep the screen mounted: the strip must stay so the focused chip keeps
+    // its identity, and the grid must stay so Down has a card to land on.
+    load(1, next, true, 0);
   };
 
-  const gotoBatch = (nextPage) => {
+  // Same reasoning as `selectGenre`: a batch jump must not unmount the grid,
+  // or the pager the viewer is standing on vanishes under them.
+  const gotoBatch = (nextPage, nextSkip) => {
     setPage(nextPage);
-    load(nextPage, genre, true);
+    setSkip(nextSkip || 0);
+    load(nextPage, genre, true, nextSkip || 0);
   };
 
   const pagination = state.pagination;
@@ -112,42 +143,48 @@ export default function CategoryPage({ categoryKey, categoryName, onOpenSeries, 
   const hasPrev = !!(pagination && pagination.hasPrev);
   const pageSpan = useMemo(() => rangeLabel(pagination, state.items.length), [pagination, state.items.length]);
 
-  // The batch index list, so the footer can offer "which block of the category
+  // The batch index list, so the footer can offer "which screen of the category
   // am I in" as numbers instead of a two-state 上一批 / 下一批 pair.
   //
-  // The batch STRIDE is a FIXED number derived from what a batch is meant to
-  // hold (the page's own minItems request), NOT `pagesFetched.length`.
+  // A batch is a SCREEN of exactly BATCH_MIN_ITEMS (50) items, so batch N
+  // starts at ITEM offset (N-1) × 50. The batch count is therefore
+  // `ceil(total / 50)` — derived from the item total, not from upstream page
+  // counts.
   //
-  // That distinction is not academic: a batch keeps pulling until it has
-  // `minItems` items OR the category runs out, so the LAST batch legitimately
-  // covers one page instead of three. Keying the arithmetic on the observed
-  // length made the batch count JUMP when the viewer reached the end (34
-  // batches of one instead of 12 batches of three) — the numbers in the pager
-  // would rearrange themselves under the finger.
+  // This used to be computed from `totalPages / stride`, where stride was
+  // "pages per batch". That was wrong twice over: it keyed the numbers on the
+  // UPSTREAM's page size (24) rather than on what the viewer actually sees,
+  // and because 50 is not a multiple of 24 the page↔item mapping drifted, so
+  // the last screen could hold anything from 1 to 50 items and the pager's
+  // numbers did not match the screens behind them. Counting in ITEMS keeps the
+  // pager honest for any upstream page size.
   //
-  // With a fixed stride the block boundaries are stable for the whole visit:
-  // 12 blocks of 3 pages, and the last one merely has fewer items in it.
+  // The (page, skip) coordinate that starts a batch is derived from the same
+  // item offset, and is what the service is asked for — see `batchCoord`.
   const batches = useMemo(() => {
-    if (!pagination) return { current: 1, total: 1, stride: 1, starts: [] };
-    const size = pagination.pageSize || 24;
-    const totalPages = pagination.totalPages || 0;
-    const stride = batchesPerBlock(size);
-    const count = Math.max(1, Math.ceil(totalPages / stride));
-    const pages = pagination.pagesFetched || [];
-    const first = pages.length ? pages[0] : pagination.page || 1;
-    const current = Math.min(count, Math.max(1, Math.floor((first - 1) / stride) + 1));
+    if (!pagination) return { current: 1, total: 1, size: 0, starts: [] };
+    const size = BATCH_MIN_ITEMS;
+    const itemTotal = pagination.total > 0 ? pagination.total : state.items.length;
+    const count = Math.max(1, Math.ceil(itemTotal / size));
+    // Which batch is on screen: derived from where THIS batch started, in
+    // items. `pagination.page`/`skip` is the coordinate we asked for.
+    const startOffset = ((pagination.page || 1) - 1) * (pagination.pageSize || 24) + (pagination.skip || 0);
+    const current = Math.min(count, Math.max(1, Math.floor(startOffset / size) + 1));
     const starts = [];
-    for (let i = 0; i < count; i++) starts.push(i * stride + 1);
-    const b = { current, total: count, stride, starts, size, totalPages };
+    for (let i = 0; i < count; i++) starts.push(i * size);
+    const b = { current, total: count, size, starts, startOffset, itemTotal };
     // Exposed for on-device probes: a TV has no devtools, and the batch maths is
     // the one piece of this page that cannot be read off the DOM.
     if (typeof window !== 'undefined') window.__hongguoBatches = b;
     return b;
-  }, [pagination]);
+  }, [pagination, state.items.length]);
 
   const gotoBatchIndex = (i) => {
-    const start = batches.starts[i - 1];
-    if (start) gotoBatch(start);
+    if (i < 1 || !batches.starts.length) return;
+    const offset = batches.starts[i - 1];
+    if (offset === undefined) return;
+    const coord = batchCoord(offset, pagination);
+    gotoBatch(coord.page, coord.skip);
   };
 
   // Every hook this component owns must be called BEFORE the early returns
@@ -407,7 +444,7 @@ export default function CategoryPage({ categoryKey, categoryName, onOpenSeries, 
         symbol="!"
         title="加载失败"
         message={state.error}
-        action={<Chip id="filter-0-0" row={0} col={0} onSelect={() => load(page, genre, false)}>按确认重试</Chip>}
+        action={<Chip id="filter-0-0" row={0} col={0} onSelect={() => load(page, genre, false, skip)}>按确认重试</Chip>}
       />
     );
   }
@@ -424,6 +461,11 @@ export default function CategoryPage({ categoryKey, categoryName, onOpenSeries, 
           <span className="category-current">{genre ? genreLabel(genreItems, genre) : '全部'}</span>
           {total ? <span className="detail-fact">共 {total} 部</span> : null}
           {pageSpan ? <span className="detail-fact">{pageSpan}</span> : null}
+          {/* Loading is shown as a small inline cue rather than by replacing the
+              page: the screen stays put, the viewer keeps their place, and the
+              wait reads as "updating" instead of "restarting". */}
+          {state.busy ? <span className="category-busy" role="status" aria-live="polite">更新中…</span> : null}
+          {!state.busy && state.error ? <span className="category-error" role="alert">{state.error}</span> : null}
         </div>
       </div>
 
@@ -488,16 +530,29 @@ export default function CategoryPage({ categoryKey, categoryName, onOpenSeries, 
 // strip slides away. 0 = first row of cards, so 2 = the third.
 const CONTENT_ROW_COLLAPSE = 2;
 
-// How many items a batch asks the service for. Upstream paginates at 24, so the
-// service keeps pulling until it has this many (see provider.category).
+// How many items a batch (a screen) holds. Upstream paginates at 24, so the
+// service collects consecutive pages and returns exactly this many — at the
+// default 5-column grid that is a full 10 rows ("每页剧集每行5个，一共10行 50个").
 const BATCH_MIN_ITEMS = 50;
 
-// How many upstream pages one batch covers. Derived from the request rather
-// than measured, so the pager's block numbers stay put even when the last block
-// holds fewer pages than the rest — see `batches` in the component.
-function batchesPerBlock(pageSize) {
-  const size = pageSize > 0 ? pageSize : 24;
-  return Math.max(1, Math.ceil(BATCH_MIN_ITEMS / size));
+// The upstream coordinate that starts the batch at global ITEM `offset`:
+// item `skip` of upstream page `page`.
+//
+// Batches are addressed in ITEMS (each is exactly BATCH_MIN_ITEMS) while the
+// upstream serves PAGES of its own size, and 50 is not a multiple of 24 — so
+// the mapping has to be computed rather than assumed. Deriving it here (and on
+// the service, which walks the same arithmetic) is what lets batches tile the
+// catalogue: screen N ends mid-page and screen N+1 begins at that same offset,
+// with nothing repeated and nothing dropped.
+//
+// `pagination` supplies the upstream page size once the first response is in;
+// before that the caller is asking for offset 0, which is page 1 / skip 0
+// regardless.
+function batchCoord(offset, pagination) {
+  const size = pagination && pagination.pageSize > 0 ? pagination.pageSize : 24;
+  const page = Math.floor(offset / size) + 1;
+  const skip = offset % size;
+  return { page: page, skip: skip };
 }
 
 // The gap a chip carries on its trailing edge (`.filter-chip`'s right margin).
@@ -565,9 +620,11 @@ function sameGeom(a, b) {
 
 function rangeLabel(pagination, shown) {
   if (!pagination) return '';
-  const pages = pagination.pagesFetched || [];
+  // The batch's first item, from the coordinate we ASKED for (page + skip), so
+  // the label stays correct even when the upstream page size differs from what
+  // the batch assumes.
   const size = pagination.pageSize || 24;
-  const first = pages.length ? (pages[0] - 1) * size + 1 : 1;
+  const first = ((pagination.page || 1) - 1) * size + (pagination.skip || 0) + 1;
   return `第 ${first}-${first + Math.max(0, shown - 1)} 部`;
 }
 
