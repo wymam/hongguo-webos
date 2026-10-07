@@ -27,6 +27,8 @@ function loadSsh2() {
 
 const { Client } = loadSsh2();
 
+// The TV's LAN address is machine-specific and is never committed: set TV_HOST
+// in your environment (the default below is a placeholder, not a real device).
 const HOST = process.env.TV_HOST || '192.0.2.10';
 const PORT = Number(process.env.TV_SSH_PORT || 9922);
 const USER = process.env.TV_SSH_USER || 'prisoner';
@@ -41,7 +43,7 @@ function resolvePass() {
 }
 
 const home = process.env.HOME || process.env.USERPROFILE || '';
-const keyPath = path.join(home, '.ssh', 'webos_tv_key');
+const keyPath = process.env.TV_KEY_PATH || path.join(home, '.ssh', 'webos_tv_key');
 
 const conn = new Client();
 conn.on('ready', () => {

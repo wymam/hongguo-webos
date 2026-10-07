@@ -88,8 +88,8 @@ echo "=== [4/4] Deploy ==="
 if [ "$MODE" != "deploy" ]; then
   echo "skipped (pass --deploy to install on the TV)"
   echo ""
-  echo "To install on a TV:"
-  echo "  TV_HOST=192.0.2.10 TV_SSH_PASSPHRASE=<devmode-pass> node tools/deploy.js"
+  echo "To install on a TV (set TV_HOST to your own device):"
+  echo "  TV_HOST=<tv-ip> TV_SSH_PASSPHRASE=<devmode-pass> node tools/deploy.js"
   exit 0
 fi
 

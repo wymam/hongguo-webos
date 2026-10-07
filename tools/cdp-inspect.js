@@ -16,9 +16,13 @@ const path = require('path');
 const Module = require('module');
 const fs = require('fs');
 
+// The TV's LAN address is machine-specific and is never committed: set TV_HOST
+// in your environment (defaults below are placeholders, not a real device).
 const HOST = process.env.TV_HOST || '192.0.2.10';
 const PORT = Number(process.env.TV_PORT || 9922);
 const USER = process.env.TV_USER || 'prisoner';
+const TV_KEY_PATH = process.env.TV_KEY_PATH ||
+  path.join(process.env.HOME || process.env.USERPROFILE || '', '.ssh', 'webos_tv_key');
 const APP_ID = 'com.hongguowebos.app';
 
 function loadSsh2() {
@@ -42,7 +46,7 @@ function connect(pass) {
     try {
       conn.connect({
         host: HOST, port: PORT, username: USER,
-        privateKey: fs.readFileSync(path.join(process.env.HOME, '.ssh', 'webos_tv_key')),
+        privateKey: fs.readFileSync(TV_KEY_PATH),
         passphrase: pass,
         readyTimeout: 15000,
         algorithms: {

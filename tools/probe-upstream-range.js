@@ -11,7 +11,9 @@
 const WS = process.env.USERPROFILE + '/.workbuddy/binaries/node/workspace/node_modules/ssh2';
 const { Client } = require(WS);
 const fs = require('fs');
-const KEY = process.env.USERPROFILE + '/.ssh/webos_tv_key';
+const KEY = process.env.TV_KEY_PATH || (process.env.USERPROFILE + '/.ssh/webos_tv_key');
+const HOST = process.env.TV_HOST || '192.0.2.10';
+const USER = process.env.TV_USER || 'prisoner';
 
 const PROBE = String.raw`
 const dir = '/media/developer/apps/usr/palm/services/com.hongguowebos.app.service';
@@ -65,4 +67,4 @@ c.on('ready', async () => {
   console.log(out);
   c.end();
 }).on('error', (e) => { console.log('SSH ERR ' + e.message); process.exit(1); })
-  .connect({ host: '192.0.2.10', port: 9922, username: 'prisoner', privateKey: fs.readFileSync(KEY), passphrase: process.argv[2], readyTimeout: 20000 });
+  .connect({ host: HOST, port: 9922, username: USER, privateKey: fs.readFileSync(KEY), passphrase: process.argv[2], readyTimeout: 20000 });

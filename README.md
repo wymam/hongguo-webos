@@ -281,7 +281,7 @@ hongguoTV 上游项目本身就没有实现登录。收藏 / 历史 / 进度全�
 
 ### 真机验证（已完成）
 
-**已在 LG 电视 192.0.2.10 上安装并实测通过。** 实测环境不是 webOS 6，而是：
+**已在 LG webOS 电视上安装并实测通过。** 实测环境不是 webOS 6，而是：
 
 ```
 webos_release : 11.2.0        (HE_DTV_W23O_AFABATAA，2023 年机型 OTA 升级后)
@@ -301,7 +301,7 @@ dist/com.hongguowebos.app_1.0.0_all.ipk   (144K)
 
 | 验证项 | 结果 |
 |---|---|
-| SSH 部署 | `prisoner@192.0.2.10:9922`，**仅密钥**认证（见下方「部署机制」） |
+| SSH 部署 | `prisoner@<tv>:9922`，**仅密钥**认证（见下方「部署机制」） |
 | 应用安装 | `/media/developer/apps/usr/palm/applications/com.hongguowebos.app` ✅ |
 | 服务安装 | `.../services/com.hongguowebos.app.service`（8 个文件 + `vendor/`）✅ |
 | 应用启动 | `WebAppMgr --app-id=com.hongguowebos.app` 常驻，未崩溃 ✅ |
@@ -400,9 +400,14 @@ node tools/cdp-inspect.js <passphrase> tools/expr-play2.js # 播放状态
 
 ### 重新部署
 
+电视地址不写死在仓库里，用环境变量传入：
+
 ```bash
-node tools/deploy.js <passphrase>
+TV_HOST=<tv-ip> node tools/deploy.js <passphrase>
 ```
+
+可选变量：`TV_PORT`（默认 9922）、`TV_USER`（默认 `prisoner`）、
+`TV_KEY_PATH`（默认 `~/.ssh/webos_tv_key`）。
 
 重装后旧实例会导致 `launch` 返回 `errorCode: -102, "app is locked"`。先杀掉再启动：
 

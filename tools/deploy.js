@@ -26,9 +26,16 @@
 const fs = require('fs');
 const path = require('path');
 
-const HOST = process.env.TV_HOST || '192.0.2.10';
+// The TV's LAN address is machine-specific, so it is NEVER hard-coded here.
+// Set TV_HOST (and TV_USER, if your image is not the default) in your own
+// environment before deploying.
+const HOST = process.env.TV_HOST;
 const PORT = Number(process.env.TV_PORT || 9922);
 const USER = process.env.TV_USER || 'prisoner';
+if (!HOST) {
+  console.error('TV_HOST is not set. Usage: TV_HOST=<tv-ip> node tools/deploy.js <passphrase>');
+  process.exit(1);
+}
 const APP_ID = 'com.hongguowebos.app';
 const REMOTE_DIR = '/media/developer/temp/';
 
@@ -206,7 +213,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // ssh2 unwraps an "Proc-Type: 4,ENCRYPTED" PEM natively when given
   // `privateKey` + `passphrase`; there is no need to decrypt it ourselves (and
   // doing so by hand is easy to get wrong — the legacy EVP_BytesToKey path).
-  const keyPath = path.join(process.env.HOME || process.env.USERPROFILE || '', '.ssh', 'webos_tv_key');
+  const keyPath = process.env.TV_KEY_PATH ||
+    path.join(process.env.HOME || process.env.USERPROFILE || '', '.ssh', 'webos_tv_key');
   let privateKey;
 
   // Prefer a key we already hold, if it passes the same sanity check. Re-fetching
