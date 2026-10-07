@@ -1,0 +1,170 @@
+CONSOLE[log] [WAM] fires webOSMouse event : Enter
+CONSOLE[log] [WAM] fires webOSMouse event : Enter
+=== RESULT ===
+{
+  "episodes": [
+    {
+      "startId": "7691781885495610392",
+      "advanced": false,
+      "bannerSeen": false,
+      "bannerToAdvanceMs": null,
+      "ctAtHandover": 76.94,
+      "maxCt": 76.94,
+      "duration": 98.06,
+      "playedRatio": 0.785,
+      "elapsedMs": 94615,
+      "premature": false,
+      "index": 1,
+      "endDiag": [
+        {
+          "t": 926932,
+          "at": 8.3,
+          "total": 98.06,
+          "knownTotal": true,
+          "reachedRealEnd": false,
+          "lastSampled": 8.3,
+          "wasSilentJump": false
+        },
+        {
+          "t": 929129,
+          "at": 9.56,
+          "total": 98.06,
+          "knownTotal": true,
+          "reachedRealEnd": false,
+          "lastSampled": 9.56,
+          "wasSilentJump": false
+        },
+        {
+          "t": 930970,
+          "at": 11.47,
+          "total": 98.06,
+          "knownTotal": true,
+          "reachedRealEnd": false,
+          "lastSampled": 11.47,
+          "wasSilentJump": false
+        },
+        {
+          "t": 933051,
+          "at": 11.47,
+          "total": 98.06,
+          "knownTotal": true,
+          "reachedRealEnd": false,
+          "lastSampled": 11.47,
+          "wasSilentJump": false
+        },
+        {
+          "t": 934462,
+          "at": 9.03,
+          "total": 98.06,
+          "knownTotal": true,
+          "reachedRealEnd": false,
+          "lastSampled": 9.03,
+          "wasSilentJump": false
+        }
+      ]
+    },
+    {
+      "startId": "7691781885495610392",
+      "bannerFirstText": "本集播放完毕 3 秒后播放下一集 · 第 2 集 按任意键取消",
+      "nextId": "7691781937660169240",
+      "advanced": true,
+      "bannerSeen": true,
+      "bannerToAdvanceMs": 3210,
+      "ctAtHandover": 98.06,
+      "maxCt": 98.06,
+      "duration": 98.06,
+      "playedRatio": 1,
+      "elapsedMs": 36899,
+      "premature": false,
+      "index": 2,
+      "endDiag": [
+        {
+          "t": 55207,
+          "at": 98.06,
+          "total": 98.06,
+          "knownTotal": true,
+          "reachedRealEnd": true,
+          "lastSampled": 98.06,
+          "wasSilentJump": false
+        }
+      ]
+    },
+    {
+      "startId": "7691781937660169240",
+      "bannerFirstText": "本集播放完毕 3 秒后播放下一集 · 第 3 集 按任意键取消",
+      "nextId": "7691781898581855256",
+      "advanced": true,
+      "bannerSeen": true,
+      "bannerToAdvanceMs": 3210,
+      "ctAtHandover": 95.78,
+      "maxCt": 95.78,
+      "duration": 95.78,
+      "playedRatio": 1,
+      "elapsedMs": 38489,
+      "premature": false,
+      "index": 3,
+      "endDiag": [
+        {
+          "t": 97739,
+          "at": 95.78,
+          "total": 95.78,
+          "knownTotal": true,
+          "reachedRealEnd": true,
+          "lastSampled": 95.78,
+          "wasSilentJump": false
+        }
+      ]
+    }
+  ],
+  "rateProbe": {
+    "requested": 4,
+    "applied": 4,
+    "advancedIn3s": 8.1
+  },
+  "autoplaySetting": {
+    "gridCols": 5,
+    "autoplayNext": true,
+    "uiScale": 1
+  },
+  "episodeCells": 61,
+  "usingFastPlayback": true,
+  "endDiag": [
+    {
+      "t": 97739,
+      "at": 95.78,
+      "total": 95.78,
+      "knownTotal": true,
+      "reachedRealEnd": true,
+      "lastSampled": 95.78,
+      "wasSilentJump": false
+    }
+  ],
+  "verdict": {
+    "episodesPlayed": 3,
+    "allAdvanced": false,
+    "nonePremature": true,
+    "allShowedBanner": false,
+    "dwellOk": false,
+    "ratios": [
+      0.785,
+      1,
+      1
+    ],
+    "dwells": [
+      null,
+      3210,
+      3210
+    ],
+    "ids": [
+      "7691781885495610392",
+      "7691781885495610392",
+      "7691781937660169240"
+    ],
+    "nextIds": [
+      null,
+      "7691781937660169240",
+      "7691781898581855256"
+    ]
+  },
+  "ok": false
+}

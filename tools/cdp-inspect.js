@@ -242,7 +242,7 @@ const DEFAULT_EXPR = `(function () {
   const cmd =
     `echo ${probeB64} | base64 -d > /tmp/cdp_probe.js && ` +
     `echo ${exprB64} | base64 -d > /tmp/cdp_expr.js && ` +
-    `cd ${hostDir} && CDP_EVAL_MS=${evalMs} node /tmp/cdp_probe.js 2>&1 | head -400`;
+    `cd ${hostDir} && CDP_EVAL_MS=${evalMs} node /tmp/cdp_probe.js 2>&1 | head -${Number(process.env.CDP_HEAD_LINES || 400)}`;
 
   // Host-side budget. Must exceed the probe's own CDP_EVAL_MS budget, or the
   // SSH channel is torn down before the TV finishes and we only see "(timeout)".

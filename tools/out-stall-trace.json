@@ -1,0 +1,527 @@
+CONSOLE[log] [WAM] fires webOSRelaunch event
+=== RESULT ===
+{
+ "startEp": "7691781885495610392",
+ "duration": 98.06,
+ "playWallStart": 1791375790303,
+ "advanced": false,
+ "finished": true,
+ "stalls": 4,
+ "gapAt": [
+  8.4,
+  11.3,
+  16.6,
+  40
+ ],
+ "minAhead": 0,
+ "events": [
+  {
+   "wall": 1791375798552,
+   "ev": "seeking",
+   "ct": 9.39
+  },
+  {
+   "wall": 1791375798689,
+   "ev": "seeked",
+   "ct": 9.39
+  },
+  {
+   "wall": 1791375798701,
+   "ev": "waiting",
+   "ct": 9.39
+  },
+  {
+   "wall": 1791375798701,
+   "ev": "canplay",
+   "ct": 9.39
+  },
+  {
+   "wall": 1791375798702,
+   "ev": "playing",
+   "ct": 9.39
+  },
+  {
+   "wall": 1791375798708,
+   "ev": "waiting",
+   "ct": 9.39
+  },
+  {
+   "wall": 1791375798711,
+   "ev": "canplay",
+   "ct": 9.39
+  },
+  {
+   "wall": 1791375798712,
+   "ev": "playing",
+   "ct": 9.39
+  },
+  {
+   "wall": 1791375798733,
+   "ev": "waiting",
+   "ct": 9.39
+  },
+  {
+   "wall": 1791375798733,
+   "ev": "canplay",
+   "ct": 9.39
+  },
+  {
+   "wall": 1791375798733,
+   "ev": "playing",
+   "ct": 9.39
+  },
+  {
+   "wall": 1791375803724,
+   "ev": "seeking",
+   "ct": 12.56
+  },
+  {
+   "wall": 1791375803851,
+   "ev": "seeked",
+   "ct": 12.56
+  },
+  {
+   "wall": 1791375803859,
+   "ev": "waiting",
+   "ct": 12.56
+  },
+  {
+   "wall": 1791375803872,
+   "ev": "canplay",
+   "ct": 12.56
+  },
+  {
+   "wall": 1791375803872,
+   "ev": "playing",
+   "ct": 12.56
+  },
+  {
+   "wall": 1791375803873,
+   "ev": "waiting",
+   "ct": 12.56
+  },
+  {
+   "wall": 1791375803879,
+   "ev": "canplay",
+   "ct": 12.56
+  },
+  {
+   "wall": 1791375803880,
+   "ev": "playing",
+   "ct": 12.56
+  },
+  {
+   "wall": 1791375810726,
+   "ev": "seeking",
+   "ct": 17.59
+  },
+  {
+   "wall": 1791375810893,
+   "ev": "seeked",
+   "ct": 17.59
+  },
+  {
+   "wall": 1791375811128,
+   "ev": "seeking",
+   "ct": 16.59
+  },
+  {
+   "wall": 1791375811129,
+   "ev": "playing",
+   "ct": 16.59
+  },
+  {
+   "wall": 1791375811263,
+   "ev": "seeked",
+   "ct": 16.59
+  },
+  {
+   "wall": 1791375820646,
+   "ev": "seeking",
+   "ct": 25.51
+  },
+  {
+   "wall": 1791375820827,
+   "ev": "seeked",
+   "ct": 25.51
+  },
+  {
+   "wall": 1791375820832,
+   "ev": "waiting",
+   "ct": 25.51
+  },
+  {
+   "wall": 1791375820833,
+   "ev": "canplay",
+   "ct": 25.51
+  },
+  {
+   "wall": 1791375820833,
+   "ev": "playing",
+   "ct": 25.51
+  },
+  {
+   "wall": 1791375836771,
+   "ev": "seeking",
+   "ct": 40.97
+  },
+  {
+   "wall": 1791375836925,
+   "ev": "seeked",
+   "ct": 41.47
+  },
+  {
+   "wall": 1791375836928,
+   "ev": "seeking",
+   "ct": 41.47
+  },
+  {
+   "wall": 1791375837077,
+   "ev": "seeked",
+   "ct": 41.47
+  },
+  {
+   "wall": 1791375837184,
+   "ev": "seeking",
+   "ct": 39.97
+  },
+  {
+   "wall": 1791375837185,
+   "ev": "playing",
+   "ct": 39.97
+  },
+  {
+   "wall": 1791375837328,
+   "ev": "seeking",
+   "ct": 40.47
+  },
+  {
+   "wall": 1791375837350,
+   "ev": "waiting",
+   "ct": 40.47
+  },
+  {
+   "wall": 1791375837351,
+   "ev": "seeked",
+   "ct": 40.47
+  },
+  {
+   "wall": 1791375837355,
+   "ev": "canplay",
+   "ct": 40.47
+  },
+  {
+   "wall": 1791375837355,
+   "ev": "playing",
+   "ct": 40.47
+  },
+  {
+   "wall": 1791375837520,
+   "ev": "waiting",
+   "ct": 40.47
+  },
+  {
+   "wall": 1791375837520,
+   "ev": "canplay",
+   "ct": 40.47
+  },
+  {
+   "wall": 1791375837520,
+   "ev": "playing",
+   "ct": 40.47
+  }
+ ],
+ "jank": [
+  {
+   "wall": 1791375782474,
+   "drift": 169
+  },
+  {
+   "wall": 1791375782702,
+   "drift": 178
+  }
+ ],
+ "samples": [
+  {
+   "wall": 1791375790304,
+   "ct": 0.9,
+   "ahead": 97.2,
+   "rs": 4
+  },
+  {
+   "wall": 1791375793314,
+   "ct": 3.9,
+   "ahead": 94.2,
+   "rs": 4
+  },
+  {
+   "wall": 1791375796323,
+   "ct": 6.9,
+   "ahead": 91.2,
+   "rs": 4
+  },
+  {
+   "wall": 1791375799336,
+   "ct": 7.8,
+   "ahead": 90.2,
+   "rs": 4
+  },
+  {
+   "wall": 1791375802344,
+   "ct": 10.9,
+   "ahead": 87.2,
+   "rs": 4
+  },
+  {
+   "wall": 1791375805355,
+   "ct": 11.9,
+   "ahead": 86.2,
+   "rs": 4
+  },
+  {
+   "wall": 1791375808364,
+   "ct": 14.9,
+   "ahead": 83.2,
+   "rs": 4
+  },
+  {
+   "wall": 1791375811373,
+   "ct": 16.6,
+   "ahead": 81.5,
+   "rs": 4
+  },
+  {
+   "wall": 1791375814382,
+   "ct": 19,
+   "ahead": 79.1,
+   "rs": 4
+  },
+  {
+   "wall": 1791375817390,
+   "ct": 22,
+   "ahead": 76.1,
+   "rs": 4
+  },
+  {
+   "wall": 1791375820400,
+   "ct": 25,
+   "ahead": 73,
+   "rs": 4
+  },
+  {
+   "wall": 1791375823409,
+   "ct": 27.2,
+   "ahead": 70.8,
+   "rs": 4
+  },
+  {
+   "wall": 1791375826418,
+   "ct": 30.2,
+   "ahead": 67.8,
+   "rs": 4
+  },
+  {
+   "wall": 1791375829426,
+   "ct": 33.2,
+   "ahead": 64.8,
+   "rs": 4
+  },
+  {
+   "wall": 1791375832435,
+   "ct": 36.3,
+   "ahead": 61.8,
+   "rs": 4
+  },
+  {
+   "wall": 1791375835443,
+   "ct": 39.3,
+   "ahead": 58.8,
+   "rs": 4
+  },
+  {
+   "wall": 1791375838454,
+   "ct": 40.1,
+   "ahead": 57.9,
+   "rs": 4
+  },
+  {
+   "wall": 1791375841461,
+   "ct": 43.2,
+   "ahead": 54.9,
+   "rs": 4
+  },
+  {
+   "wall": 1791375844469,
+   "ct": 46.2,
+   "ahead": 51.9,
+   "rs": 4
+  },
+  {
+   "wall": 1791375847476,
+   "ct": 49.2,
+   "ahead": 48.9,
+   "rs": 4
+  },
+  {
+   "wall": 1791375850485,
+   "ct": 52.2,
+   "ahead": 45.9,
+   "rs": 4
+  },
+  {
+   "wall": 1791375853494,
+   "ct": 55.2,
+   "ahead": 42.9,
+   "rs": 4
+  },
+  {
+   "wall": 1791375854698,
+   "ct": 98.1,
+   "ahead": 0,
+   "rs": 4
+  }
+ ],
+ "mediaLog": [
+  {
+   "at": 1791375788718,
+   "req": "(none)",
+   "start": 0,
+   "end": 1048575,
+   "len": 1048576,
+   "short": false,
+   "total": 7896351,
+   "active": 1,
+   "resolveMs": 1,
+   "fetchMs": 94,
+   "decryptMs": 29,
+   "serveMs": 125
+  },
+  {
+   "at": 1791375798666,
+   "req": "bytes=782377-",
+   "start": 782377,
+   "end": 1830952,
+   "len": 1048576,
+   "short": false,
+   "total": 7896351,
+   "active": 1,
+   "resolveMs": 0,
+   "fetchMs": 94,
+   "decryptMs": 12,
+   "serveMs": 106
+  },
+  {
+   "at": 1791375803829,
+   "req": "bytes=1407765-",
+   "start": 1407765,
+   "end": 2456340,
+   "len": 1048576,
+   "short": false,
+   "total": 7896351,
+   "active": 1,
+   "resolveMs": 0,
+   "fetchMs": 82,
+   "decryptMs": 15,
+   "serveMs": 97
+  },
+  {
+   "at": 1791375810871,
+   "req": "bytes=2190322-",
+   "start": 2190322,
+   "end": 3238897,
+   "len": 1048576,
+   "short": false,
+   "total": 7896351,
+   "active": 1,
+   "resolveMs": 0,
+   "fetchMs": 106,
+   "decryptMs": 26,
+   "serveMs": 135
+  },
+  {
+   "at": 1791375811246,
+   "req": "bytes=2190322-",
+   "start": 2190322,
+   "end": 3238897,
+   "len": 1048576,
+   "short": false,
+   "total": 7896351,
+   "active": 1,
+   "resolveMs": 0,
+   "fetchMs": 83,
+   "decryptMs": 21,
+   "serveMs": 105
+  },
+  {
+   "at": 1791375820800,
+   "req": "bytes=3172710-",
+   "start": 3172710,
+   "end": 4221285,
+   "len": 1048576,
+   "short": false,
+   "total": 7896351,
+   "active": 1,
+   "resolveMs": 0,
+   "fetchMs": 100,
+   "decryptMs": 46,
+   "serveMs": 147
+  },
+  {
+   "at": 1791375836903,
+   "req": "bytes=4126252-",
+   "start": 4126252,
+   "end": 5174827,
+   "len": 1048576,
+   "short": false,
+   "total": 7896351,
+   "active": 1,
+   "resolveMs": 0,
+   "fetchMs": 85,
+   "decryptMs": 38,
+   "serveMs": 124
+  },
+  {
+   "at": 1791375837060,
+   "req": "bytes=4126252-",
+   "start": 4126252,
+   "end": 5174827,
+   "len": 1048576,
+   "short": false,
+   "total": 7896351,
+   "active": 1,
+   "resolveMs": 0,
+   "fetchMs": 82,
+   "decryptMs": 38,
+   "serveMs": 121
+  },
+  {
+   "at": 1791375837324,
+   "req": "bytes=4126252-",
+   "start": 4126252,
+   "end": 5174827,
+   "len": 1048576,
+   "short": false,
+   "total": 7896351,
+   "active": 1,
+   "resolveMs": 0,
+   "fetchMs": 92,
+   "decryptMs": 35,
+   "serveMs": 128
+  },
+  {
+   "at": 1791375837496,
+   "req": "bytes=4126252-",
+   "start": 4126252,
+   "end": 5174827,
+   "len": 1048576,
+   "short": false,
+   "total": 7896351,
+   "active": 1,
+   "resolveMs": 0,
+   "fetchMs": 111,
+   "decryptMs": 35,
+   "serveMs": 147
+  }
+ ],
+ "errors": []
+}

@@ -678,7 +678,17 @@ export default function PlayerPage({ series, episode, startAt = 0, onBack, onEpi
         src={src}
         autoPlay
         playsInline
-        preload="metadata"
+        // preload="auto" (measured fix, round 19): with "metadata" this webOS
+        // Chromium fetches lazily — it requests the next 1MiB segment ONLY when
+        // playback is already at the buffer edge. The buffer then runs dry every
+        // ~8.5s (1MiB ≈ 8.5s of video), and instead of a plain `waiting` the
+        // media engine SILENTLY TELEPORTS currentTime forward; the timeupdate
+        // interceptor yanks it back, and each catch is a visible 0.5-1s stutter
+        // (expr-stall-trace: 8 stutters/98s episode, every one preceded by a
+        // dry buffer, zero service errors, fetch ~100ms). "auto" lets Chromium
+        // prefetch sequentially while playing, so the edge never dries up.
+        // Safe with MAX_ACTIVE_STREAMS=16 (round-14 concurrency fix).
+        preload="auto"
         onClick={togglePlay}
       />
 

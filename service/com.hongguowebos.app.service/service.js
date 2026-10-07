@@ -459,9 +459,23 @@ function mediaServerHandler(req, res) {
   // resolving afresh — and that is cheap compared to showing the viewer an
   // error. The retry is deliberately single-shot: if a brand-new resolve also
   // fails, the problem is upstream and an error is the honest answer.
+  // Timing instrumentation (diagnostics only — behaviour identical to chunk()):
+  // split each segment fetch into upstream-download ms vs local-decrypt ms so a
+  // stall can be attributed to the network or the CPU from mediaLog alone.
+  var tEntry = Date.now();
   var chunkAttempts = 0;
   function fetchSegment(h, s, e) {
-    return h.chunk(s, e).catch(function (err) {
+    function runTimed(handle, ss, ee) {
+      var tf = Date.now();
+      return handle.rawChunk(ss, ee).then(function (raw) {
+        var fetchMs = Date.now() - tf;
+        var td = Date.now();
+        return Promise.resolve(handle.decrypt(raw, ss)).then(function (data) {
+          return { data: data, fetchMs: fetchMs, decryptMs: Date.now() - td };
+        });
+      });
+    }
+    return runTimed(h, s, e).catch(function (err) {
       if (chunkAttempts >= 1) throw err;
       chunkAttempts++;
       logErr('media', episodeId + ': retrying with a fresh stream handle (' +
@@ -472,12 +486,14 @@ function mediaServerHandler(req, res) {
         // window now falls outside it, clamp rather than send a bad range.
         var effEnd = Math.min(e, (fresh.total || h.total) - 1);
         var effStart = Math.min(s, effEnd);
-        return fresh.chunk(effStart, effEnd);
+        return runTimed(fresh, effStart, effEnd);
       });
     });
   }
 
+  var tResolve = Date.now();
   getStreamHandle(episodeId).then(function (handle) {
+    var resolveMs = Date.now() - tResolve;
     var total = handle.total;
     var requested = parseRange(req.headers.range, total);
 
@@ -490,19 +506,40 @@ function mediaServerHandler(req, res) {
       return;
     }
 
-    // Clamp any request to one segment so a pathological Range cannot ask us
-    // to decrypt tens of megabytes in a single response. An absent Range also
-    // gets the first segment as a 206 (the player then Range-requests the rest
-    // at its own pace).
-    var start;
-    var end;
-    if (requested) {
-      start = requested[0];
-      end = Math.min(requested[1], start + SEG_SIZE - 1, total - 1);
-    } else {
-      start = 0;
-      end = Math.min(total, SEG_SIZE) - 1;
+    // No Range header -> honest PROGRESSIVE DOWNLOAD of the whole file (200).
+    //
+    // This is the fix for the teleport bug. Previously a no-Range GET got a
+    // 206 with only the first 1MiB — a response that flatly violates RFC 7233
+    // (206 requires a Range request). Measured on-device (expr-fresh-episode,
+    // pure pipeline, fresh never-played episodes): Chromium's buffer model
+    // breaks on that violation and reports buffered=[0,duration] after the
+    // first segment; believing everything is buffered, it never prefetches,
+    // and when playback catches up to the actually-downloaded edge it SEEKS
+    // forward inside the bogus range (= jumps to the end) instead of firing
+    // `waiting`. Teleports reproduced at ct≈5.7 (auto) and ct≈12.7 (metadata)
+    // on a 100% clean file (ffmpeg: 0 decode errors; NAL walk 2940/2940 valid;
+    // decrypt split-invariant). A plain 200 full-body response is the standard
+    // progressive-download path every MP4 on the web uses: Chromium then
+    // tracks received bytes honestly, and the demuxer never sees a phantom
+    // buffer. Range requests (seeks) still get the clamped 206 path below.
+    if (!requested) {
+      if (headOnly) {
+        res.writeHead(200, {
+          'Content-Type': 'video/mp4',
+          'Content-Length': String(total),
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'no-store'
+        });
+        res.end();
+        return;
+      }
+      return streamWholeFile(handle, episodeId, total, res, fetchSegment);
     }
+
+    // Clamp any Range request to one segment so a pathological Range cannot
+    // ask us to decrypt tens of megabytes in a single response.
+    var start = requested[0];
+    var end = Math.min(requested[1], start + SEG_SIZE - 1, total - 1);
     var length = end - start + 1;
 
     if (headOnly) {
@@ -520,8 +557,8 @@ function mediaServerHandler(req, res) {
     // Decrypt the segment, then send. We fetch and decrypt the first segment
     // BEFORE writing headers so a failure can still produce a clean 502
     // instead of a truncated 206.
-    return fetchSegment(handle, start, end).then(function (raw) {
-      var body = Buffer.from(raw);
+    return fetchSegment(handle, start, end).then(function (seg) {
+      var body = Buffer.from(seg.data);
       // Never advertise more than we are actually sending. If the upstream
       // throttled us into a short read, report the SHORTER range we truly hold
       // rather than a Content-Range the media element would trust and then
@@ -544,7 +581,9 @@ function mediaServerHandler(req, res) {
       logMedia({
         at: Date.now(), req: req.headers.range || '(none)',
         start: start, end: end, len: body.length, short: body.length < length,
-        total: total, active: activeStreams
+        total: total, active: activeStreams,
+        resolveMs: resolveMs, fetchMs: seg.fetchMs, decryptMs: seg.decryptMs,
+        serveMs: Date.now() - tEntry
       });
       res.writeHead(206, {
         'Content-Type': 'video/mp4',
@@ -569,8 +608,68 @@ function mediaServerHandler(req, res) {
   });
 }
 
-var mediaServer = http.createServer(mediaServerHandler);
+// Stream the entire file as one honest 200 progressive download.
+//
+// Fetches/decrypts one 1MiB segment at a time and writes it out with proper
+// backpressure, so service memory stays ~1 segment no matter the file size.
+// Chromium typically drains the stream (whole episode, 8-29MB, lands in a few
+// seconds at LAN speeds) or aborts early once its buffer cap is hit — either
+// is fine: on 'close' we simply stop fetching.
+function streamWholeFile(handle, episodeId, total, res, fetchSegment) {
+  // Fetch the first segment BEFORE writing headers, so a dead upstream still
+  // produces a clean 502 rather than a truncated 200.
+  return fetchSegment(handle, 0, Math.min(SEG_SIZE, total) - 1).then(function (first) {
+    var firstBody = Buffer.from(first.data);
+    res.writeHead(200, {
+      'Content-Type': 'video/mp4',
+      'Content-Length': String(total),
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-store'
+    });
+    res.on('error', function () { /* client went away mid-stream */ });
 
+    var pos = 0;
+    var pending = firstBody;
+    function pump() {
+      if (res.destroyed || res.writableEnded) return;
+      if (pos >= total) { res.end(); return; }
+      var write = function (body) {
+        logMedia({
+          at: Date.now(), req: '(progressive)',
+          start: pos, end: pos + body.length - 1, len: body.length,
+          short: false, total: total, active: activeStreams
+        });
+        pos += body.length;
+        mediaStats.served++;
+        mediaStats.bytes += body.length;
+        if (body.length === 0) { res.destroy(); return; }
+        if (res.write(body)) pump();
+        else res.once('drain', pump);
+      };
+      if (pending) {
+        var b = pending;
+        pending = null;
+        write(b);
+        return;
+      }
+      var end = Math.min(pos + SEG_SIZE, total) - 1;
+      fetchSegment(handle, pos, end).then(function (seg) {
+        if (res.destroyed || res.writableEnded) return;
+        write(Buffer.from(seg.data));
+      }).catch(function (e) {
+        mediaStats.errors++;
+        logErr('media', episodeId + ': progressive stream failed at ' + pos +
+          ' (' + ((e && e.message) || e) + ')');
+        // Mid-body failure: truncate. The client keeps the bytes it already
+        // has and may Range-request the remainder (206 path).
+        try { res.destroy(); } catch (e2) { /* already closed */ }
+      });
+    }
+    pump();
+  });
+}
+
+var mediaServer = http.createServer(mediaServerHandler);
 // Never let a socket error crash the service.
 mediaServer.on('clientError', function (err, socket) {
   try {
