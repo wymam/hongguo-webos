@@ -1,0 +1,620 @@
+/* Design system for the red-berry TV client.
+   Target: webOS 6+ (Chromium 79), fixed 1920x1080 surface.
+
+   Baseline guarantees we can rely on (Chromium 79):
+     * CSS Grid with `gap`            -> no flex-wrap fallback needed
+     * `scrollIntoView` with options  -> no shim needed
+     * `aspect-ratio` is NOT reliable -> use padding-top tricks
+   The webOS 4.x `@supports not (display: grid)` fallback present in the
+   reference project is intentionally omitted: it targeted Chromium 53. */
+
+:root {
+  --tv-bg: #101014;
+  --tv-rail: #16171b;
+  --tv-surface: #212227;
+  --tv-card: #1c1d22;
+  --tv-text: #f4f4f6;
+  --tv-secondary: #a6a8b2;
+  --tv-muted: #8b8e99;
+  --tv-line: #2f3138;
+  /* Red-berry brand: a warm produce red, kept legible on dark surfaces. */
+  --tv-accent: #ff5c45;
+  --tv-accent-dim: #c9432f;
+  --tv-focus: #ffffff;
+  --tv-radius: 14px;
+  --ui-scale: 1;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body, #root {
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: var(--tv-bg);
+  color: var(--tv-text);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+button, input { font-family: inherit; }
+img { display: block; }
+
+/* ---------- layout ---------- */
+
+.app-container { display: flex; width: 1920px; height: 1080px; }
+
+/* Fixed rail; the drawer overlays content so opening navigation never
+   reflows the grid underneath it.
+ *
+ * Collapsed width is 76px (down from 112px) at the owner's request: "左边菜单栏
+ * 隐藏的时候宽度收窄一点". 76px still clears a 30px icon plus its 18px margins on
+ * both sides, so nothing clips, but it hands ~36px back to the artwork.
+ * Anything below ~72px starts cropping the icon's focus highlight. */
+.sidebar {
+  position: absolute; top: 0; left: 0; z-index: 40;
+  width: 76px; min-width: 76px; height: 1080px;
+  padding: 30px 0 24px;
+  background: var(--tv-rail);
+  border-right: 1px solid #23242a;
+  overflow: hidden;
+  transition: width .16s ease;
+}
+.sidebar[data-expanded="true"] {
+  width: 300px;
+  box-shadow: 24px 0 56px rgba(0, 0, 0, .45);
+}
+.sidebar-logo {
+  display: flex; align-items: center; height: 56px;
+  padding-left: 23px; margin-bottom: 22px;
+  color: var(--tv-accent);
+}
+.sidebar-wordmark {
+  white-space: nowrap; opacity: 0; margin-left: 19px;
+  color: var(--tv-text); font-size: 30px; font-weight: 750; letter-spacing: -1px;
+  transition: opacity .16s ease;
+}
+.sidebar-wordmark span {
+  display: block; margin-top: -3px; color: var(--tv-secondary);
+  font-size: 15px; font-weight: 400; letter-spacing: 1px;
+}
+.sidebar[data-expanded="true"] .sidebar-label,
+.sidebar[data-expanded="true"] .sidebar-wordmark { opacity: 1; }
+.sidebar-nav { padding: 4px 0; }
+.sidebar-item {
+  position: relative; display: flex; align-items: center;
+  min-height: 47px; padding: 9px 14px; margin: 3px 8px;
+  border-radius: 10px; color: var(--tv-secondary);
+  white-space: nowrap; cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+.sidebar-item > .sidebar-icon { width: 30px; margin-right: 18px; flex: none; font-size: 20px; text-align: center; }
+.sidebar[data-expanded="true"] .sidebar-item { padding: 9px 18px; margin: 3px 20px; }
+.sidebar-item .sidebar-label {
+  white-space: nowrap; opacity: 0; font-size: calc(21px * var(--ui-scale));
+  transition: opacity .16s ease;
+}
+.sidebar-item.active:not(.focused) { background: #2c2326; color: var(--tv-text); }
+.sidebar-item.active::before {
+  content: ''; position: absolute; left: -8px; top: 12px; bottom: 12px;
+  width: 4px; border-radius: 0 4px 4px 0; background: var(--tv-accent);
+}
+.sidebar[data-expanded="true"] .sidebar-item.active::before { left: -20px; }
+.sidebar-item.focused { background: var(--tv-focus); color: #17181c; }
+.sidebar-divider { height: 1px; margin: 10px 16px; background: #2a2b32; }
+.sidebar[data-expanded="true"] .sidebar-divider { margin: 10px 28px; }
+
+.main-content { margin-left: 76px; width: 1844px; flex: none; height: 1080px; display: flex; flex-direction: column; }
+
+/* ---------- page chrome ---------- */
+
+.page-heading { padding: 26px 56px 12px; flex-shrink: 0; }
+.page-eyebrow {
+  color: var(--tv-muted); font-size: 15px; font-weight: 600;
+  letter-spacing: 2.5px; margin-bottom: 8px;
+}
+/* The page title (收藏 / 观看记录 / 找剧) must read as the biggest thing and
+   never be smaller than the 19px filter chips on category pages. */
+.page-heading h1 { font-size: calc(46px * var(--ui-scale)); font-weight: 700; letter-spacing: -.5px; line-height: 1.15; }
+.page-heading p { color: var(--tv-secondary); font-size: calc(19px * var(--ui-scale)); margin-top: 8px; line-height: 1.6; }
+
+.feed-heading {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 0 56px; margin: 20px 0 2px;
+}
+.feed-heading h2 { font-size: calc(24px * var(--ui-scale)); font-weight: 600; }
+.feed-heading .feed-more { color: var(--tv-muted); font-size: calc(17px * var(--ui-scale)); }
+
+/* ---------- hero banner ---------- */
+
+.hero {
+  position: relative; flex-shrink: 0;
+  /* 232px, not 300: with portrait posters the vertical budget is the scarce
+     resource, and every pixel the hero takes is a pixel of grid the viewer
+     cannot see. There is deliberately no fixed height on the hero instead —
+     the banners are 2:3-less landscape art, so a fixed strip is correct. */
+  margin: 4px 56px 0; height: 232px;
+  border-radius: 18px; overflow: hidden;
+  background: var(--tv-surface);
+}
+.hero-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.hero-scrim {
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, rgba(10,10,14,.94) 0%, rgba(10,10,14,.72) 42%, rgba(10,10,14,.12) 100%);
+}
+.hero-body { position: absolute; left: 44px; bottom: 38px; width: 780px; }
+.hero-title {
+  font-size: calc(40px * var(--ui-scale)); font-weight: 700; line-height: 1.15;
+  margin-bottom: 12px; text-shadow: 0 2px 16px rgba(0,0,0,.6);
+}
+.hero-desc {
+  color: #d8dae2; font-size: calc(19px * var(--ui-scale)); line-height: 1.55;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; margin-bottom: 16px; text-shadow: 0 1px 10px rgba(0,0,0,.7);
+}
+.hero-tags { display: flex; align-items: center; }
+.hero-tag {
+  background: rgba(255,255,255,.14); border-radius: 20px;
+  padding: 5px 14px; margin-right: 10px;
+  font-size: calc(16px * var(--ui-scale)); color: #e7e8ee;
+}
+.hero-cta { display: inline-flex; align-items: center; }
+.hero-fade-in { animation: heroIn .22s ease; }
+@keyframes heroIn { from { opacity: .4 } to { opacity: 1 } }
+
+/* ---------- grids ---------- */
+
+.scroll-area { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+
+/* TV UIs never show a scrollbar. The episode list scrolls via overflow:auto so
+   the focus system's scrollIntoView works (see EpisodeGrid), and on webOS
+   Chromium that would otherwise paint a bar over the artwork. */
+.scroll-area ::-webkit-scrollbar,
+.episode-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
+.scroll-area, .episode-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+
+.video-grid-viewport { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.video-grid {
+  /* A plain block: ShelfGrid emits its own row wrappers, each of which is the
+     actual grid. Making this a grid too would collapse every row into one
+     full-width column. */
+  display: block;
+  padding: 20px 56px 40px;
+  transform: translateY(0);
+  /* NO `transition: transform` here, on purpose.
+     The offset is written imperatively by ShelfGrid. A CSS transition on the
+     same property races that writer and defers the new value until the
+     transition advances — which never happens on a surface that produces no
+     compositor frames. Measured on the built app: with the transition present
+     the content did not move at all; with it removed the same write moved it
+     immediately. Animated smoothing is done in ShelfGrid instead, and the
+     final offset is committed synchronously so framing can never gate it.
+     Do not add `transition` back. */
+  will-change: transform;
+}
+
+/* Red-berry posters are PORTRAIT (2:3). Card width therefore drives card
+   height almost 1:1, and the honest constraint is vertical, not horizontal:
+   at 1080p with a 300px hero, ONE row of 3 columns produced 878px-tall cards
+   and shoved everything else off-screen. So the column count is chosen to
+   keep a full row plus a peek of the next inside the viewport, and the type
+   scale steps down as columns increase.
+   Measured on the built bundle at 1920x1080 (viewport 940px):
+     2 cols -> 823px thumb, 1285px card   (too tall)
+     3 cols -> 549px thumb,  878px card   (one row only)
+     4 cols -> 402px thumb,  665px card   (row + cramped peek)
+     5 cols -> 313px thumb,  530px card   (row + comfortable peek)  <- default */
+.video-card {
+  position: relative; background: var(--tv-card);
+  border-radius: var(--tv-radius);
+  overflow: hidden; cursor: pointer;
+  transition: transform .16s cubic-bezier(.2,.7,.2,1);
+}
+.video-card.focused { transform: scale(1.03); z-index: 2; }
+.video-card.focused::after {
+  content: ''; position: absolute; inset: 0;
+  border: 4px solid var(--tv-focus); border-radius: var(--tv-radius);
+  pointer-events: none;
+}
+/* Long-press progress indicator. */
+.video-card.holding::before {
+  content: ''; position: absolute; left: 0; bottom: 0; height: 4px;
+  z-index: 3; background: var(--tv-accent);
+  animation: holdGrow .8s linear forwards;
+}
+@keyframes holdGrow { from { width: 0 } to { width: 100% } }
+
+.video-card-thumb {
+  position: relative; width: 100%;
+  /* Vertical poster shape, 2:3, via the padding trick (aspect-ratio is not
+     dependable on Chromium 79). */
+  padding-top: 140%;
+  background: #26272d;
+}
+.video-card-thumb img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; opacity: 0; transition: opacity .18s ease;
+}
+.video-card-thumb img.image-ready { opacity: 1; }
+
+.video-card-badge {
+  position: absolute; bottom: 10px; right: 10px;
+  background: rgba(10,11,14,.88); border-radius: 5px;
+  padding: 3px 8px; font-size: calc(16px * var(--ui-scale));
+}
+.video-card-rank {
+  position: absolute; top: 10px; left: 10px;
+  min-width: 34px; height: 34px; line-height: 34px; text-align: center;
+  border-radius: 8px; background: var(--tv-accent);
+  color: #fff; font-size: calc(19px * var(--ui-scale)); font-weight: 700;
+}
+.video-card-info { padding: 12px; }
+.video-card-title {
+  color: var(--tv-text); font-size: calc(22px * var(--ui-scale));
+  line-height: 1.25; font-weight: 500; margin-bottom: 7px;
+  height: 2.5em; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.video-card-meta {
+  color: var(--tv-secondary); font-size: calc(17px * var(--ui-scale));
+  line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.video-card-progress {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 5px;
+  background: rgba(255,255,255,.22);
+}
+.video-card-progress i { display: block; height: 100%; background: var(--tv-accent); }
+
+/* Orientation tag — bottom-LEFT, because the episode-count badge is pinned to
+   bottom-right and the rank number to top-left. Sitting it opposite the badge
+   keeps every corner distinct at a glance. `has-progress` lifts it clear of the
+   resume bar so the bar never underlines the text. */
+.video-card-aspect {
+  position: absolute; bottom: 10px; left: 10px;
+  display: inline-flex; align-items: center; gap: 5px;
+  background: rgba(10,11,14,.88); border-radius: 5px;
+  padding: 4px 9px; font-size: calc(15px * var(--ui-scale));
+  line-height: 1; letter-spacing: .5px;
+  color: #e9eaee;
+}
+/* The mark is a bordered box whose SHAPE carries the meaning — see the note in
+   VideoCard.jsx about geometric glyphs rendering as tofu on this build. */
+.video-card-aspect-mark {
+  display: inline-block; flex: none;
+  border: 1.5px solid currentColor; border-radius: 1px;
+  width: calc(9px * var(--ui-scale)); height: calc(15px * var(--ui-scale));
+}
+.video-card-aspect.portrait .video-card-aspect-mark { width: calc(9px * var(--ui-scale)); }
+.video-card-aspect.landscape .video-card-aspect-mark { width: calc(17px * var(--ui-scale)); height: calc(10px * var(--ui-scale)); }
+.video-card-aspect.portrait { color: #ffd166; }
+.video-card-aspect.landscape { color: #7fd1ff; }
+.video-card-aspect.has-progress { bottom: 14px; }
+.video-card-fav {
+  position: absolute; top: 10px; right: 10px;
+  color: var(--tv-accent); font-size: 20px;
+  text-shadow: 0 1px 6px rgba(0,0,0,.8);
+}
+
+/* End-of-episode auto-advance hand-off. Anchored bottom-right so it never
+   covers the control shelf, which sits along the bottom. */
+.player-nextup {
+  position: absolute; right: 56px; bottom: 132px; z-index: 12;
+  min-width: 300px; padding: 18px 26px;
+  background: rgba(10,11,14,.92); border: 2px solid var(--tv-accent);
+  border-radius: 14px; text-align: right;
+  animation: nextup-in .18s ease;
+}
+@keyframes nextup-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.player-nextup-label {
+  color: var(--tv-muted); font-size: calc(16px * var(--ui-scale));
+  letter-spacing: 2px; margin-bottom: 8px;
+}
+.player-nextup-title {
+  color: var(--tv-text); font-size: calc(24px * var(--ui-scale)); font-weight: 600;
+}
+.player-nextup-hint {
+  color: var(--tv-secondary); font-size: calc(15px * var(--ui-scale)); margin-top: 8px;
+}
+
+/* ---------- filter chips ---------- */
+
+/* The genre strip is a GRID of rows, not one wrapped line.
+   With 24 genres on 真人剧 the old flex-wrap put three visual rows under a
+   single `filter-0-N` numbering, so ArrowDown (row+1) found nothing and every
+   genre past the first wrapped line was unreachable. Each row is its own
+   element here so the visual rows and the focus rows are the same thing. */
+.filter-grid { padding: 0 56px 14px; flex-shrink: 0; transition: max-height .22s ease, opacity .22s ease, padding .22s ease; max-height: 160px; opacity: 1; overflow: hidden; }
+.filter-grid.collapsed { max-height: 0; opacity: 0; padding-bottom: 0; }
+.filter-row {
+  display: flex; align-items: center; flex-wrap: nowrap;
+  overflow: hidden; margin-bottom: 8px;
+}
+.filter-row:last-child { margin-bottom: 0; }
+.filter-chip {
+  background: var(--tv-card); border: 2px solid var(--tv-line);
+  border-radius: 24px; color: var(--tv-secondary);
+  padding: 7px 16px; margin: 0 8px 0 0;
+  font-size: calc(18px * var(--ui-scale)); cursor: pointer;
+  white-space: nowrap; flex: none;
+  transition: background .12s ease, color .12s ease, transform .12s ease;
+}
+.filter-chip.active { color: var(--tv-text); border-color: #8c8f9a; background: #31333b; }
+/* A chip has to shout when it has the ring: the strip is dense, and a subtle
+   tint read as "nothing happened" when the owner pressed Up off the grid. */
+.filter-chip.focused {
+  background: var(--tv-focus); color: #17181c; border-color: var(--tv-focus);
+  transform: scale(1.08); font-weight: 600;
+}
+
+/* ---------- category header ---------- */
+/* The current genre is the page's own title, so it must read as the biggest
+   thing on screen — never smaller than the chips underneath it, which is how
+   it looked before (a 30px h1 above 19px chips). */
+.category-head { padding: 22px 56px 14px; flex-shrink: 0; }
+.category-title {
+  font-size: calc(46px * var(--ui-scale));
+  font-weight: 700; letter-spacing: -1px; line-height: 1.15;
+  margin: 2px 0 10px;
+}
+.category-meta { display: flex; align-items: center; gap: 12px; }
+.category-meta .detail-fact { font-size: calc(18px * var(--ui-scale)); }
+/* The currently-selected genre (全部 / 爱情 / 年代 …). Highlighted so the
+   selection is visible at a glance, and larger than the chips it refers to. */
+.category-current {
+  color: var(--tv-focus); font-weight: 700; font-size: calc(22px * var(--ui-scale));
+  padding: 2px 14px; border: 2px solid var(--tv-focus); border-radius: 22px;
+}
+
+/* ---------- episodes ---------- */
+
+.episode-grid {
+  display: grid; grid-template-columns: repeat(6, 1fr);
+  grid-gap: 14px; padding: 4px 56px 40px;
+}
+.episode-cell {
+  position: relative; background: var(--tv-card); border: 3px solid transparent;
+  border-radius: 10px; padding: 16px 8px; text-align: center;
+  font-size: calc(20px * var(--ui-scale)); color: var(--tv-text); cursor: pointer;
+  transition: transform .14s ease;
+}
+.episode-cell.focused { border-color: var(--tv-focus); background: #2c2e35; transform: scale(1.05); }
+.episode-cell.watched { color: var(--tv-secondary); }
+.episode-cell.current { color: var(--tv-accent); font-weight: 700; }
+
+/* ---------- detail header ---------- */
+
+.detail-head { display: flex; padding: 22px 56px 6px; flex-shrink: 0; }
+.detail-cover {
+  width: 210px; height: 294px; flex: none;
+  border-radius: 12px; overflow: hidden; background: var(--tv-surface);
+  margin-right: 30px;
+}
+.detail-cover img { width: 100%; height: 100%; object-fit: cover; }
+.detail-info { min-width: 0; flex: 1; padding-top: 4px; }
+.detail-title { font-size: calc(36px * var(--ui-scale)); font-weight: 700; line-height: 1.2; margin-bottom: 12px; }
+.detail-facts { display: flex; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.detail-fact {
+  color: var(--tv-secondary); font-size: calc(18px * var(--ui-scale));
+  margin-right: 18px;
+}
+.detail-fact.rating { color: var(--tv-accent); font-weight: 700; }
+.detail-desc {
+  color: #cfd1da; font-size: calc(19px * var(--ui-scale)); line-height: 1.6;
+  max-width: 1200px; display: -webkit-box; -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 18px;
+}
+.detail-actions { display: flex; align-items: center; }
+
+/* ---------- buttons ---------- */
+
+.tv-action {
+  display: inline-flex; align-items: center;
+  background: var(--tv-surface); border: 2px solid transparent;
+  border-radius: 30px; padding: 11px 26px; margin-right: 14px;
+  font-size: calc(20px * var(--ui-scale)); color: var(--tv-text); cursor: pointer;
+  transition: transform .14s ease, background .14s ease;
+}
+.tv-action.primary { background: var(--tv-accent); color: #fff; }
+.tv-action.focused { background: var(--tv-focus); color: #17181c; border-color: var(--tv-focus); transform: scale(1.04); }
+.tv-action .tv-icon { margin-right: 10px; }
+
+/* ---------- player ---------- */
+
+/* The player is a full-screen layer, NOT a flex sibling.
+ *
+ * `.app-container` is `display:flex` and already contains `.main-content`
+ * (1808px, flex:none). `.player-root` used to be a third flex item with only
+ * `width:1920px` and no `flex` shorthand, so it defaulted to flex-shrink:1 and
+ * was crushed into the leftover width — 1920 - 1808 = 112px. That is exactly
+ * the "一小片 on the right" the user saw: audio played (the element was live
+ * and its src loaded) while the picture was squeezed into a 112px column, with
+ * the 112px sidebar (z-index 40) painting over it.
+ *
+ * Taking it out of flow with absolute positioning removes it from the flex
+ * calculation entirely, so it is always the full 1920x1080 regardless of what
+ * else is mounted. z-index sits above the sidebar (40) and any overlay. */
+.player-root {
+  position: absolute; top: 0; left: 0; z-index: 60;
+  width: 1920px; height: 1080px; background: #000;
+}
+/* `display:block` matters here: the inline-level baseline gap on a <video>
+   inside a block creates a few px of dead space and can interact badly with
+   object-fit on the TV's Chromium build. */
+.player-root video {
+  display: block;
+  width: 100%; height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+.player-overlay {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(transparent, rgba(8,9,12,.92) 26%, rgba(8,9,12,.98));
+  padding: 54px 64px 34px;
+}
+.player-title { font-size: calc(30px * var(--ui-scale)); font-weight: 550; margin-bottom: 10px; }
+.player-subtitle { color: var(--tv-secondary); font-size: calc(19px * var(--ui-scale)); margin-bottom: 20px; }
+.player-progress-row { display: flex; align-items: center; margin-bottom: 18px; }
+.player-progress-bar {
+  position: relative; flex: 1 1 auto; height: 8px; border-radius: 4px;
+  background: rgba(255,255,255,.22); overflow: hidden;
+}
+.player-progress-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--tv-accent); }
+.player-time {
+  color: #d5d7de; font-size: calc(19px * var(--ui-scale));
+  margin-left: 20px; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.player-btns { display: flex; align-items: center; }
+.player-btn {
+  display: inline-flex; align-items: center;
+  background: rgba(255,255,255,.1); border-radius: 10px;
+  padding: 12px 22px; margin-right: 14px;
+  font-size: calc(20px * var(--ui-scale)); color: var(--tv-text); cursor: pointer;
+  transition: transform .14s ease, background .14s ease;
+}
+.player-btn.focused { background: var(--tv-focus); color: #17181c; transform: scale(1.04); }
+.player-buffering {
+  position: absolute; top: 45%; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center;
+  padding: 18px 26px; border-radius: 14px;
+  background: rgba(16,16,20,.9); color: var(--tv-text);
+  font-size: calc(22px * var(--ui-scale)); pointer-events: none; z-index: 12;
+}
+.player-error {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  max-width: 900px; text-align: center;
+  padding: 32px 40px; border-radius: 16px;
+  background: rgba(24,20,22,.96); border: 2px solid #4a2b2b;
+}
+.player-error h2 { font-size: calc(28px * var(--ui-scale)); margin-bottom: 12px; }
+.player-error p { color: var(--tv-secondary); font-size: calc(20px * var(--ui-scale)); line-height: 1.6; }
+.player-error-hint { margin-top: 10px; font-size: calc(17px * var(--ui-scale)); color: var(--tv-muted); }
+
+/* ---------- states ---------- */
+
+.page-state {
+  flex: 1 1 auto; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center; padding: 40px;
+}
+.page-state-symbol { font-size: 64px; color: var(--tv-accent); margin-bottom: 20px; }
+.page-state h2 { font-size: calc(30px * var(--ui-scale)); margin-bottom: 12px; font-weight: 600; }
+.page-state p { color: var(--tv-secondary); font-size: calc(20px * var(--ui-scale)); line-height: 1.6; max-width: 700px; margin-bottom: 24px; }
+
+.loading-spinner {
+  width: 42px; height: 42px; border-radius: 50%;
+  border: 4px solid #35373f; border-top-color: var(--tv-accent);
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg) } }
+
+/* ---------- search ---------- */
+
+.search-container { padding: 0 56px 40px; height: 100%; display: flex; flex-direction: column; }
+.search-input {
+  width: 100%; height: 76px;
+  border: 3px solid var(--tv-line); background: #1e1f25; border-radius: 14px;
+  color: var(--tv-text); padding: 16px 28px;
+  font-size: calc(25px * var(--ui-scale)); outline: none;
+}
+.search-input.focused, .search-input:focus { border-color: var(--tv-focus); background: #26272e; }
+.search-input::placeholder { color: var(--tv-muted); }
+.search-help { margin: 12px 0 22px; color: var(--tv-secondary); font-size: calc(18px * var(--ui-scale)); }
+.search-recent { display: flex; flex-wrap: wrap; }
+.search-recent-chip {
+  background: var(--tv-card); border-radius: 22px; padding: 8px 20px;
+  margin: 0 10px 10px 0; font-size: calc(19px * var(--ui-scale));
+  color: var(--tv-secondary); cursor: pointer;
+}
+.search-recent-chip.focused { background: var(--tv-focus); color: #17181c; }
+
+/* ---------- toast ---------- */
+
+.toast {
+  position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
+  background: rgba(28,29,35,.97); border: 1px solid var(--tv-line);
+  border-radius: 12px; padding: 16px 30px; z-index: 90;
+  font-size: calc(21px * var(--ui-scale));
+  animation: toastIn .18s ease;
+}
+@keyframes toastIn { from { opacity: 0; transform: translate(-50%, 12px) } to { opacity: 1; transform: translate(-50%, 0) } }
+
+/* ---------- context menu ---------- */
+
+.cardmenu-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 80; }
+.cardmenu {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  min-width: 440px; background: var(--tv-surface); border: 1px solid var(--tv-line);
+  border-radius: 18px; padding: 22px; z-index: 81;
+}
+.cardmenu-title {
+  color: var(--tv-secondary); font-size: calc(18px * var(--ui-scale));
+  margin-bottom: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cardmenu-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px; margin-bottom: 8px; border-radius: 10px;
+  background: var(--tv-card); font-size: calc(21px * var(--ui-scale)); cursor: pointer;
+}
+.cardmenu-item.focused { background: var(--tv-focus); color: #17181c; }
+
+/* ---------- settings / diagnostics ---------- */
+
+.config-page {
+  padding: 24px 56px 40px; height: 100%;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.config-intro { flex-shrink: 0; margin-bottom: 24px; }
+.config-intro h1 { font-size: calc(30px * var(--ui-scale)); font-weight: 650; letter-spacing: -.5px; }
+.config-intro p { color: var(--tv-secondary); font-size: calc(19px * var(--ui-scale)); margin-top: 8px; line-height: 1.6; }
+
+/* Two columns so the option rows and the diagnostic block share the screen
+   without scrolling — a TV has no scrollbar the user can reach. Section
+   titles and the diagnostic report span both columns; everything else flows
+   into the first available cell. */
+.config-options {
+  flex: 1 1 auto; min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-column-gap: 48px;
+  grid-auto-rows: min-content;
+  align-content: start;
+}
+
+.config-section-title {
+  grid-column: 1 / -1;
+  color: var(--tv-muted); font-size: 15px; font-weight: 600;
+  letter-spacing: 2.5px; margin: 0 0 8px;
+}
+.config-section-title:not(:first-child) { margin-top: 18px; }
+
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between;
+  min-height: 62px; padding: 0 22px; margin-bottom: 10px;
+  background: var(--tv-card); border: 3px solid transparent;
+  border-radius: 12px; cursor: pointer;
+  font-size: calc(21px * var(--ui-scale));
+}
+.settings-row:not(.focusable) { cursor: default; }
+.settings-row.focused { background: var(--tv-focus); color: #17181c; }
+.settings-row.focused .settings-row-value,
+.settings-row.focused .settings-row-hint { color: #4a4c55; }
+.settings-row-hint {
+  color: var(--tv-muted); font-size: calc(16px * var(--ui-scale));
+  margin-left: 14px; letter-spacing: 1px;
+}
+.settings-row-value { color: var(--tv-secondary); font-size: calc(20px * var(--ui-scale)); }
+
+.diagnostic-report {
+  grid-column: 1 / -1;
+  margin-top: 6px; padding: 18px 22px;
+  background: var(--tv-card); border-radius: 12px;
+  border-left: 4px solid var(--tv-line);
+  font-size: 18px; line-height: 1.9;
+}
+.diagnostic-report > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar, .sidebar-label, .sidebar-wordmark, .video-card,
+  .episode-cell, .tv-action, .player-btn, .filter-chip { transition: none; }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "hongguo-webos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Red-berry (hongguo) short-drama client for LG webOS 6+",
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "build": "bash build.sh",
+    "deploy": "node tools/deploy.js",
+    "dev": "cd app && vite",
+    "verify": "node tools/verify-sm3.js && node tools/verify-sm3-shim.js && node tools/verify-provider.js && node tools/verify-service.js && node tools/verify-service-boot.js && node tools/smoke-live.js",
+    "verify:ui": "node tools/render-check.js && node tools/dump-registry.js && node tools/nav-check.js",
+    "tv:dom": "node tools/cdp-inspect.js",
+    "tv:nav": "node tools/cdp-inspect.js tools/expr-nav.js",
+    "tv:sidebar": "node tools/cdp-inspect.js tools/expr-sidebar.js",
+    "tv:play": "node tools/cdp-inspect.js tools/expr-play2.js",
+    "tv:player-fix": "node tools/cdp-inspect.js tools/expr-player-fix.js",
+    "tv:rail": "node tools/cdp-inspect.js tools/expr-rail.js",
+    "tv:railwalk": "node tools/cdp-inspect.js tools/expr-railwalk.js",
+    "tv:rail2": "node tools/cdp-inspect.js tools/expr-railround2.js",
+    "tv:shelf": "node tools/cdp-inspect.js tools/expr-playerverify.js",
+    "tv:epscroll": "node tools/cdp-inspect.js tools/expr-epscroll.js",
+    "tv:stress": "node tools/cdp-inspect.js tools/expr-playback-stress.js"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

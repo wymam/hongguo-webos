@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, initial-scale=1.0" />
+    <title>红果短剧</title>
+    <style>
+      /* Fixed 1920x1080 surface: a TV viewport never scrolls the document,
+         and the focus system scrolls inner containers with transforms. */
+      html, body, #root {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #0d0d1a;
+      }
+    </style>
+    <script src="./webOSTVjs-1.2.13/webOSTV.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

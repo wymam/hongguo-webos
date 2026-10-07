@@ -1,0 +1,10 @@
+{
+  "id": "com.hongguowebos.app.service",
+  "description": "Red-berry (Hongguo) short-drama API and media proxy service",
+  "services": [
+    {
+      "name": "com.hongguowebos.app.service",
+      "description": "Red-berry (Hongguo) short-drama API and media proxy service"
+    }
+  ]
+}

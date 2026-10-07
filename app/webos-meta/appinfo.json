@@ -1,0 +1,19 @@
+{
+  "id": "com.hongguowebos.app",
+  "version": "1.0.0",
+  "vendor": "HongguoWebOS",
+  "type": "web",
+  "main": "index.html",
+  "title": "红果短剧",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "iconColor": "#ff5c45",
+  "bgColor": "#101014",
+  "resolution": "1920x1080",
+  "disableBackHistoryAPI": true,
+  "handlesRelaunch": false,
+  "requiredPermissions": [
+    "all"
+  ],
+  "requiredACG": []
+}

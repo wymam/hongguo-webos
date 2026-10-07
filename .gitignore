@@ -1,0 +1,20 @@
+# build output
+dist/
+*.ipk
+*.wgt
+
+# dependencies
+node_modules/
+
+# tooling scratch
+.tmp/
+.tools/
+tools/out/
+
+# local build-script leftovers
+app/dist/
+
+# editor / os
+.DS_Store
+Thumbs.db
+*.log

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>t</title>
+<style>
+  body { margin: 0; font-family: sans-serif; }
+  .vp { width: 600px; height: 200px; overflow: hidden; }
+  .body { width: 600px; }
+  .card { height: 100px; background: #ddd; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<div class="vp"><div class="body" id="b"><div class="card" id="c1">1</div><div class="card">2</div><div class="card">3</div></div></div>
+<pre id="out"></pre>
+<script>
+var out = [];
+function r(el) { var x = el.getBoundingClientRect(); return { top: Math.round(x.top), left: Math.round(x.left), bottom: Math.round(x.bottom) }; }
+var b = document.getElementById('b');
+var c = document.getElementById('c1');
+
+out.push('static tree, no animation, no framework');
+out.push('before            : ' + JSON.stringify(r(c)));
+
+b.style.transform = 'translateY(-120px)';
+void b.offsetHeight;
+out.push('after style set   : ' + JSON.stringify(r(c)));
+out.push('  inline style    : ' + b.style.transform);
+out.push('  computed style  : ' + getComputedStyle(b).transform);
+
+out.push('');
+out.push('now via requestAnimationFrame + offsetWidth read');
+requestAnimationFrame(function () {
+  b.style.transform = 'translateY(-240px)';
+  void b.offsetWidth;
+  out.push('after rAF set     : ' + JSON.stringify(r(c)));
+  out.push('  inline style    : ' + b.style.transform);
+  out.push('  computed style  : ' + getComputedStyle(b).transform);
+  document.getElementById('out').textContent = out.join('\n');
+  document.title = 'DONE';
+});
+</script>
+</body>
+</html>
