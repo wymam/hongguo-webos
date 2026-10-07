@@ -324,13 +324,26 @@ img { display: block; }
    single `filter-0-N` numbering, so ArrowDown (row+1) found nothing and every
    genre past the first wrapped line was unreachable. Each row is its own
    element here so the visual rows and the focus rows are the same thing. */
-.filter-grid { padding: 0 56px 14px; flex-shrink: 0; transition: max-height .22s ease, opacity .22s ease, padding .22s ease; max-height: 160px; opacity: 1; overflow: hidden; }
+.filter-grid { padding: 0 56px 14px; flex-shrink: 0; transition: max-height .22s ease, opacity .22s ease, padding .22s ease; max-height: 200px; opacity: 1; overflow: hidden; }
 .filter-grid.collapsed { max-height: 0; opacity: 0; padding-bottom: 0; }
+/* Rows must NEVER wrap on their own.
+   The JS packer decides the row break from measured chip widths, and the focus
+   ids are numbered by that decision (`filter-<row>-<col>`). If the browser were
+   allowed to wrap, a chip the packer put on row 0 would render on a second
+   visual line while still being addressed as row 0 — the D-pad would walk a row
+   that does not exist on screen. That is the original bug, so it stays pinned. */
 .filter-row {
   display: flex; align-items: center; flex-wrap: nowrap;
   overflow: hidden; margin-bottom: 8px;
+  /* Distribute the packing remainder between the chips rather than leaving it
+     all at the right edge, so a full row reads as full. Harmless when the
+     remainder is small — which, with a measured packer, it always is. */
+  justify-content: space-between;
 }
 .filter-row:last-child { margin-bottom: 0; }
+/* space-between needs the tail to not carry a right margin, or the last chip
+   sits one margin short of the edge and the row still looks ragged. */
+.filter-row .filter-chip:last-child { margin-right: 0; }
 .filter-chip {
   background: var(--tv-card); border: 2px solid var(--tv-line);
   border-radius: 24px; color: var(--tv-secondary);
