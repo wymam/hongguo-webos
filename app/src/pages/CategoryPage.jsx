@@ -59,7 +59,7 @@ export default function CategoryPage({ categoryKey, categoryName, onOpenSeries, 
     (nextPage, nextGenre, keepItems) => {
       let alive = true;
       setState((s) => ({ ...s, status: s.items.length && keepItems ? 'ready' : 'loading', error: '' }));
-      getCategory(categoryKey, nextPage, nextGenre, 50)
+      getCategory(categoryKey, nextPage, nextGenre, BATCH_MIN_ITEMS)
         .then((res) => {
           if (!alive) return;
           if (!res || res.returnValue === false) {
@@ -112,6 +112,44 @@ export default function CategoryPage({ categoryKey, categoryName, onOpenSeries, 
   const hasPrev = !!(pagination && pagination.hasPrev);
   const pageSpan = useMemo(() => rangeLabel(pagination, state.items.length), [pagination, state.items.length]);
 
+  // The batch index list, so the footer can offer "which block of the category
+  // am I in" as numbers instead of a two-state 上一批 / 下一批 pair.
+  //
+  // The batch STRIDE is a FIXED number derived from what a batch is meant to
+  // hold (the page's own minItems request), NOT `pagesFetched.length`.
+  //
+  // That distinction is not academic: a batch keeps pulling until it has
+  // `minItems` items OR the category runs out, so the LAST batch legitimately
+  // covers one page instead of three. Keying the arithmetic on the observed
+  // length made the batch count JUMP when the viewer reached the end (34
+  // batches of one instead of 12 batches of three) — the numbers in the pager
+  // would rearrange themselves under the finger.
+  //
+  // With a fixed stride the block boundaries are stable for the whole visit:
+  // 12 blocks of 3 pages, and the last one merely has fewer items in it.
+  const batches = useMemo(() => {
+    if (!pagination) return { current: 1, total: 1, stride: 1, starts: [] };
+    const size = pagination.pageSize || 24;
+    const totalPages = pagination.totalPages || 0;
+    const stride = batchesPerBlock(size);
+    const count = Math.max(1, Math.ceil(totalPages / stride));
+    const pages = pagination.pagesFetched || [];
+    const first = pages.length ? pages[0] : pagination.page || 1;
+    const current = Math.min(count, Math.max(1, Math.floor((first - 1) / stride) + 1));
+    const starts = [];
+    for (let i = 0; i < count; i++) starts.push(i * stride + 1);
+    const b = { current, total: count, stride, starts, size, totalPages };
+    // Exposed for on-device probes: a TV has no devtools, and the batch maths is
+    // the one piece of this page that cannot be read off the DOM.
+    if (typeof window !== 'undefined') window.__hongguoBatches = b;
+    return b;
+  }, [pagination]);
+
+  const gotoBatchIndex = (i) => {
+    const start = batches.starts[i - 1];
+    if (start) gotoBatch(start);
+  };
+
   // Every hook this component owns must be called BEFORE the early returns
   // below. `chips` used to be computed after them, so the loading render ran
   // fewer hooks than the ready render — React error #310 ("Rendered more hooks
@@ -130,97 +168,201 @@ export default function CategoryPage({ categoryKey, categoryName, onOpenSeries, 
   );
 
   const gridRef = useRef(null);
-  // null = "not measured yet"; the packer then uses the even split.
-  const [chipWidths, setChipWidths] = useState(null);
-  // The strip's usable width, kept in state so it participates in the packer's
-  // dependency list. A TV viewport does not resize during a session, but the
-  // strip is laid out once and the packer runs on the render AFTER that, so
-  // reading clientWidth inside the memo alone would freeze whichever value
-  // happened to exist then.
+  // Per-chip geometry as MEASURED by the probe effect below. Each entry keeps
+  // the two parts of a chip's width separate, because only one of them scales
+  // with the font:
+  //
+  //   text  = the label's rendered advance (grows with font-size)
+  //   fixed = padding + borders (constant)
+  //
+  // Splitting them is what lets the layout ask "if the font were 20% bigger,
+  // how wide would this chip be?" without re-measuring the DOM for every
+  // candidate size — a re-measure per candidate would be a layout thrash.
+  const [chipGeom, setChipGeom] = useState(null);
   const [stripWidth, setStripWidth] = useState(0);
 
-  const chips = useMemo(() => {
-    const perRow = Math.max(1, Math.ceil(list.length / 2));
+  // ---- strip layout: font scale + row split --------------------------------
+  //
+  // The owner's two asks are one problem seen from two sides:
+  //
+  //   "真人剧的关键字筛选标题既然分成2行就做大点、格式平均一点尽量铺满2行"
+  //   "其他页 一行的关键字标题页做的稍微大点，尽量不要这么空"
+  //
+  // Both say the same thing: the chips are too small for the room they have.
+  // Measured on the TV, a 25-genre strip used 60% + 57% of the width — 40% of
+  // every row stood empty. So the strip no longer just decides HOW TO SPLIT a
+  // fixed-size row set; it first decides HOW BIG the chips should be, and only
+  // then splits what is left.
+  //
+  // The search walks the font scale up and keeps the best layout it finds:
+  //
+  //   * one row always beats two ("一行可以铺满就不要分2行");
+  //   * among layouts with the same row count, the one whose EMPTIEST row is
+  //     fullest wins ("尽量铺满").
+  //
+  // It never returns more than two rows, and the scale is capped so a
+  // three-label strip cannot inflate into a wall of enormous pills.
+  const layout = useMemo(() => {
+    const n = list.length;
+    const perRow = Math.max(1, Math.ceil(n / 2));
     const evenSplit = () => {
       const rows = [];
-      for (let i = 0; i < list.length; i += perRow) rows.push(list.slice(i, i + perRow));
+      for (let i = 0; i < n; i += perRow) rows.push(list.slice(i, i + perRow));
+      return { rows, scale: 1, stretch: false, fill: null };
+    };
+    // Nothing measured yet (first paint, or a layout-less render): fall back to
+    // the historical even split at the CSS font size. Never worse than before.
+    if (!chipGeom || chipGeom.length !== n || !stripWidth) return evenSplit();
+
+    // The row split for a set of per-chip widths, as index ranges. Balanced,
+    // with neither half allowed to overflow; greedy only as a rescue when no
+    // balanced split exists (a chip or pair too wide to halve).
+    const split = (widths) => {
+      let total = 0;
+      for (let i = 0; i < n; i++) total += widths[i] + CHIP_GAP;
+      if (total <= stripWidth) return [[0, n]];
+
+      let bestAt = 0;
+      let bestGap = Infinity;
+      let prefix = 0;
+      for (let i = 0; i < n - 1; i++) {
+        prefix += widths[i] + CHIP_GAP;
+        const tail = total - prefix;
+        if (prefix > stripWidth || tail > stripWidth) continue;
+        const gap = Math.abs(prefix - tail);
+        if (gap < bestGap) { bestGap = gap; bestAt = i + 1; }
+      }
+      if (bestAt) return [[0, bestAt], [bestAt, n]];
+
+      const rows = [];
+      let from = 0;
+      let used = 0;
+      for (let i = 0; i < n; i++) {
+        const w = widths[i] + CHIP_GAP;
+        if (i > from && used + w > stripWidth) {
+          rows.push([from, i]);
+          from = i;
+          used = 0;
+        }
+        used += w;
+      }
+      rows.push([from, n]);
       return rows;
     };
-    // No measurement (first paint, or a headless render with no layout):
-    // even split, i.e. the historical behaviour. Never worse than before.
-    if (!chipWidths || chipWidths.length !== list.length) return evenSplit();
-    // Width known to be unusable, or not yet read: nothing to pack against.
-    if (!stripWidth) return evenSplit();
 
-    // Two passes, because "fill the row" and "do not strand the tail" pull in
-    // opposite directions.
-    //
-    // Pure greedy packing fills row 0 to the brim and leaves whatever is left
-    // on row 1 — measured on the TV that produced 23 chips + 2 chips, i.e. a
-    // 108%-full first row above a 9%-full second one. That is *worse* than the
-    // even split it replaced. So:
-    //
-    //   1. If the whole list fits on ONE row, stop — that is the request
-    //      ("一行可以铺满就不要分2行") in its cleanest form.
-    //   2. Otherwise pick the split point whose two rows are most BALANCED,
-    //      subject to neither row overflowing. That keeps the tail off the
-    //      floor while still letting each row run to the edge: with balanced
-    //      packing a 25-chip row set lands near 50/50, not 92/8.
-    const total = list.reduce((acc, g, i) => acc + chipWidths[i] + CHIP_GAP, 0);
-    if (total <= stripWidth) return [list];
+    // How full the emptiest row is, as a fraction of the strip width. This is
+    // the number to maximise: a two-row layout is only "filled" when its
+    // *thinner* row is.
+    const thinnestFill = (widths, ranges) => {
+      let worst = Infinity;
+      for (let k = 0; k < ranges.length; k++) {
+        let sum = 0;
+        for (let i = ranges[k][0]; i < ranges[k][1]; i++) sum += widths[i] + CHIP_GAP;
+        const f = sum / stripWidth;
+        if (f < worst) worst = f;
+      }
+      return worst;
+    };
 
-    // The split point that minimises the difference between the two rows'
-    // widths. Scanning every prefix is O(n) and n is a few dozen genres.
-    let bestSplit = 0;
-    let bestGap = Infinity;
-    let prefix = 0;
-    for (let i = 0; i < list.length - 1; i++) {
-      prefix += chipWidths[i] + CHIP_GAP;
-      const tail = total - prefix;
-      // Neither half may exceed the strip: a half that overflows is a half
-      // that has wrapped into a third row, which the owner ruled out.
-      if (prefix > stripWidth || tail > stripWidth) continue;
-      const gap = Math.abs(prefix - tail);
-      if (gap < bestGap) { bestGap = gap; bestSplit = i + 1; }
+    const STEPS = 36; // ~3% font increments; runs once per label set, not per frame
+    let best = null;
+    for (let k = 0; k <= STEPS; k++) {
+      const s = 1 + (CHIP_SCALE_MAX - 1) * (k / STEPS);
+      // Prediction is not exact: glyph advance does not scale perfectly
+      // linearly (hinting, sub-pixel rounding and font fallback all move the
+      // number a little). Measured on the TV, a prediction that said "two rows"
+      // at scale 1.6 rendered as three — the browser wrapped the overflow onto
+      // a third line, which `overflow: hidden` then CUT OFF, hiding chips the
+      // D-pad still believed in. `CHIP_SAFETY` keeps the predicted width on the
+      // generous side so the rows we plan are the rows that appear.
+      const widths = chipGeom.map((g) => (g.text * s + g.fixed) * CHIP_SAFETY);
+      const ranges = split(widths);
+      if (ranges.length > 2) break; // three rows: disqualified, and only worse ahead
+      const fill = thinnestFill(widths, ranges);
+      if (fill > 1.01) continue; // a row this full has already wrapped
+      const better =
+        !best ||
+        ranges.length < best.ranges.length ||
+        (ranges.length === best.ranges.length && fill > best.fill);
+      if (better) best = { ranges, scale: s, fill };
+      // A single, well-filled row is the ideal; growing further would only
+      // push it back over into two. Stop.
+      if (best.ranges.length === 1 && best.fill >= CHIP_FILL_TARGET) break;
     }
-    // No legal split exists (one chip wider than the strip, or a two-chip list
-    // whose halves both overflow). Fall back to greedy, which at least keeps
-    // the row numbering consistent with the rendered lines.
-    if (!bestSplit) {
-      const rows = [];
-      let row = [];
-      let used = 0;
-      list.forEach((g, i) => {
-        const w = chipWidths[i] + CHIP_GAP;
-        if (row.length && used + w > stripWidth) { rows.push(row); row = []; used = 0; }
-        row.push(g);
-        used += w;
-      });
-      if (row.length) rows.push(row);
-      return rows;
+    if (!best) return evenSplit();
+    // Stretching is for the ONE-ROW case only.
+    //
+    // With two rows the font has already been grown until the rows are full, so
+    // there is no slack left to share — and enabling grow there did real damage:
+    // `flex: 1 1 auto` cannot shrink a chip below its min-content width (the
+    // labels are `nowrap`), so a full two-row strip kept its natural widths,
+    // added 13 gaps on top, and overflowed by 184px (measured: scrollWidth 1916
+    // against a 1732 client width), clipping the tail.
+    //
+    // A single row that is still short of the target is a different situation:
+    // there IS space, and sharing it is exactly what the owner asked for
+    // ("尽量不要这么空").
+    const stretch = best.ranges.length === 1 && best.fill < CHIP_FILL_TARGET;
+    const result = {
+      rows: best.ranges.map((r) => list.slice(r[0], r[1])),
+      scale: best.scale,
+      stretch,
+      fill: best.fill
+    };
+    // Exposed for on-device probes, alongside window.__hongguoBatches. The
+    // decision above is the one thing a probe cannot reconstruct from the DOM:
+    // it sees the ROWS the search chose, but not the scale it rejected or the
+    // measured geom it decided from.
+    if (typeof window !== 'undefined') {
+      window.__hongguoLayout = {
+        n,
+        stripWidth,
+        scale: best.scale,
+        fill: best.fill,
+        stretch,
+        rows: best.ranges,
+        geom: chipGeom.map((g) => ({ text: Math.round(g.text), fixed: Math.round(g.fixed) }))
+      };
     }
+    return result;
+  }, [list, chipGeom, stripWidth]);
 
-    return [list.slice(0, bestSplit), list.slice(bestSplit)];
-  }, [list, chipWidths, stripWidth]);
+  const chips = layout.rows;
+  const chipScale = layout.scale;
 
   // Measure the chips ONCE per label set, and the strip width alongside them.
-  // offsetWidth is read after paint, so the first frame still shows the
-  // fallback split; the re-pack lands on the next one and the strip settles.
-  // A chip's width is a pure function of its label and the CSS, so this never
-  // needs to run again for the same labels.
+  //
+  // The measurement is taken at the UNSCALED font (the layout above only ever
+  // writes `--chip-scale` after this runs), so `text` and `fixed` stay a clean
+  // base to scale from. `offsetWidth` includes the padding and borders, so the
+  // text advance is recovered by subtracting them — reading the computed style
+  // rather than assuming keeps this correct if the CSS padding changes.
+  //
+  // A chip's geometry is a pure function of its label and the CSS, so this
+  // never needs to run again for the same labels.
   useEffect(() => {
     const dom = gridRef.current;
     if (!dom) return;
-    const measured = [];
     const nodes = dom.querySelectorAll('.filter-chip');
     if (!nodes.length || nodes.length !== list.length) return;
-    for (let i = 0; i < nodes.length; i++) measured.push(nodes[i].offsetWidth || 0);
-    // A zero width means the strip was laid out at zero size (display:none,
-    // detached probe). Keep the fallback rather than packing into nonsense.
-    if (measured.some((w) => !w)) return;
+    const measured = [];
+    let ok = true;
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i];
+      const cs = window.getComputedStyle(el);
+      const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+      const bordX = (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.borderRightWidth) || 0);
+      const fixed = padX + bordX;
+      const w = el.offsetWidth || 0;
+      // A zero width means the strip was laid out at zero size (display:none,
+      // detached probe). Keep the fallback rather than scaling nonsense.
+      if (!w) { ok = false; break; }
+      measured.push({ text: Math.max(1, w - fixed), fixed });
+    }
+    if (!ok) return;
     const usable = usableStripWidth(dom);
     if (!usable) return;
-    setChipWidths((prev) => (sameWidths(prev, measured) ? prev : measured));
+    setChipGeom((prev) => (sameGeom(prev, measured) ? prev : measured));
     setStripWidth((prev) => (prev === usable ? prev : usable));
   }, [list]);
 
@@ -286,7 +428,15 @@ export default function CategoryPage({ categoryKey, categoryName, onOpenSeries, 
       </div>
 
       {chipRows ? (
-        <div className={`filter-grid${stripHidden ? ' collapsed' : ''}`} ref={gridRef}>
+        <div
+          className={`filter-grid${stripHidden ? ' collapsed' : ''}${layout.stretch ? ' stretched' : ''}`}
+          ref={gridRef}
+          // The measured font scale, handed to CSS as a variable. Inline style
+          // is safe here (unlike ShelfGrid's transform): nothing else writes to
+          // this element's style, so a React re-render cannot clobber a value
+          // some other code depends on.
+          style={{ '--chip-scale': chipScale }}
+        >
           {chips.map((row, r) => (
             <div className="filter-row" key={`frow-${r}`}>
               {row.map((g, c) => (
@@ -318,24 +468,15 @@ export default function CategoryPage({ categoryKey, categoryName, onOpenSeries, 
         onLongPress={onLongPress}
         emptyText="该分类暂时没有内容"
         headerId={stripEntryId}
-        footerId={hasPrev ? 'page-0-0' : hasMore ? 'page-0-1' : null}
+        footerId={batches.total > 1 ? 'page-0-0' : null}
         footer={
-          hasPrev || hasMore ? (
-            <div style={{ display: 'flex', alignItems: 'center' }}>
-              {hasPrev ? (
-                <PageChip id="page-0-0" onSelect={() => gotoBatch(Math.max(1, prevBatchStart(pagination)))}>
-                  ← 上一批
-                </PageChip>
-              ) : null}
-              <span style={{ margin: '0 16px', color: 'var(--tv-secondary)', fontSize: 19 }}>
-                {pageSpan || ''}
-              </span>
-              {hasMore ? (
-                <PageChip id="page-0-1" onSelect={() => gotoBatch(pagination.nextPage)}>
-                  下一批 →
-                </PageChip>
-              ) : null}
-            </div>
+          batches.total > 1 ? (
+            <BatchPager
+              current={batches.current}
+              total={batches.total}
+              pageSpan={pageSpan}
+              onPick={gotoBatchIndex}
+            />
           ) : null
         }
       />
@@ -347,10 +488,47 @@ export default function CategoryPage({ categoryKey, categoryName, onOpenSeries, 
 // strip slides away. 0 = first row of cards, so 2 = the third.
 const CONTENT_ROW_COLLAPSE = 2;
 
+// How many items a batch asks the service for. Upstream paginates at 24, so the
+// service keeps pulling until it has this many (see provider.category).
+const BATCH_MIN_ITEMS = 50;
+
+// How many upstream pages one batch covers. Derived from the request rather
+// than measured, so the pager's block numbers stay put even when the last block
+// holds fewer pages than the rest — see `batches` in the component.
+function batchesPerBlock(pageSize) {
+  const size = pageSize > 0 ? pageSize : 24;
+  return Math.max(1, Math.ceil(BATCH_MIN_ITEMS / size));
+}
+
 // The gap a chip carries on its trailing edge (`.filter-chip`'s right margin).
 // Packing must count it: the chip's offsetWidth does NOT include its margin,
 // and ignoring the gap is what let 23 chips claim to fit where only 21 did.
 const CHIP_GAP = 8;
+
+// How far the strip is allowed to grow its chips, as a multiple of the base
+// font.
+//
+// 1.6 was too timid for a SHORT strip (漫剧's 9 genres reached only 62% fill at
+// the cap, still visibly half-empty — the "尽量不要这么空" complaint), but 2.0
+// was too greedy: it pushed 真人剧's two rows to 105% and wrapped 漫剧's single
+// row onto a second line. 1.75 is the largest value measured to fill a short
+// strip without pushing a long one over. The residual slack on a single row is
+// taken by stretching (see `.filter-grid.stretched`), which is far more precise
+// than hunting for a font size that lands exactly on the edge.
+const CHIP_SCALE_MAX = 1.75;
+
+// A single row this full counts as "done" — stop growing. 0.94 leaves a hair of
+// slack so sub-pixel rounding cannot tip the row into a wrap.
+const CHIP_FILL_TARGET = 0.94;
+
+// Prediction slack for the scaled width. Glyph advance does not scale perfectly
+// linearly with font-size (hinting, sub-pixel rounding, font fallback), and the
+// error grows with the scale: measured on the TV, the linear model under-counted
+// a 2.0× strip by about 15% — enough that a layout predicted as two rows
+// rendered as three (the overflow wrapped, and `overflow: hidden` then cut the
+// tail off, hiding chips the D-pad still believed in). 1.10 keeps the plan on
+// the safe side; the stretch pass takes back any slack it leaves.
+const CHIP_SAFETY = 1.10;
 
 // "content-2-0" -> 2. Returns null for anything that is not a content cell,
 // so callers can tell "not the grid" from "row zero".
@@ -374,22 +552,15 @@ function usableStripWidth(dom) {
   return Math.max(0, dom.clientWidth - padL - padR);
 }
 
-// Width lists are re-measured on every label change; comparing them lets the
-// state update be skipped when the measurement lands on the same numbers, which
-// is the common case for a re-render that did not change the filters.
-function sameWidths(a, b) {
+// Compare two measurement sets so the state update can be skipped when the
+// numbers land on the same values, which is the common case for a re-render
+// that did not change the filters.
+function sameGeom(a, b) {
   if (!a || a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].text !== b[i].text || a[i].fixed !== b[i].fixed) return false;
+  }
   return true;
-}
-
-// Where the previous batch started. The batch covers `pagesFetched` upstream
-// pages, so stepping back means going back by that many — not by one, which
-// would re-show 24 items the viewer has already seen.
-function prevBatchStart(pagination) {  const pages = (pagination && pagination.pagesFetched) || [];
-  const size = pages.length || 1;
-  const first = pages.length ? pages[0] : (pagination && pagination.page) || 1;
-  return Math.max(1, first - size);
 }
 
 function rangeLabel(pagination, shown) {
@@ -398,6 +569,78 @@ function rangeLabel(pagination, shown) {
   const size = pagination.pageSize || 24;
   const first = pages.length ? (pages[0] - 1) * size + 1 : 1;
   return `第 ${first}-${first + Math.max(0, shown - 1)} 部`;
+}
+
+// The pager under the grid: a row of batch NUMBERS, not just "上一批 / 下一批".
+//
+// The owner asked to be able to jump straight to a later block ("带上页面序号，
+// 可以直接点选进行后续剧集展现，不要只是显示 下一批"). Walking there one batch
+// at a time costs a service round trip each, so the numbers are the point.
+//
+// When a category has more batches than fit comfortably on one line, the row is
+// WINDOWED: the first and last are always shown, with the current batch's
+// neighbours around it and an ellipsis marking the gap. That keeps the control
+// one line wide no matter how deep the category goes, which matters because the
+// grid's own row arithmetic addresses these buttons by column.
+function BatchPager({ current, total, pageSpan, onPick }) {
+  const items = useMemo(() => windowBatches(current, total), [current, total]);
+  return (
+    <div className="batch-pager">
+      <span className="batch-span">{pageSpan || ''}</span>
+      <div className="batch-list">
+        {items.map((it, i) =>
+          it === null ? (
+            <span className="batch-gap" key={`gap-${i}`}>…</span>
+          ) : (
+            <PageChip
+              // The column is the position in the WINDOWED list, not the batch
+              // number: focus walks the line as rendered, and the ids must match
+              // what is on screen. Gap marks are spans, not chips, so they do
+              // not consume a column — the chips stay tightly numbered even
+              // though an ellipsis sits between them visually.
+              id={`page-0-${it.slot}`}
+              key={`b-${it.n}`}
+              col={it.slot}
+              active={it.n === current}
+              onSelect={() => onPick(it.n)}
+            >
+              {it.n}
+            </PageChip>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Which batch numbers to show: always the first and last, plus a window around
+// the current one. `null` marks a gap (rendered as an ellipsis).
+//
+// FIRST/LAST always visible is deliberate — it is what makes the control read
+// as "there are N blocks" rather than "there are a few blocks near me".
+//
+// Each entry carries a `slot`: the chip's COLUMN on the line. Gaps are plain
+// spans and do not take a column, so the chips stay densely numbered
+// 0..k-1 and Right/Left walk them without stepping over an ellipsis. That
+// matters because `useFocusable` addresses by (row, col) and the default is
+// (0, 0) — a chip whose col was left implicit would collide with the first one.
+function windowBatches(current, total, radius = 2) {
+  const nums = [];
+  if (total <= 7) {
+    for (let n = 1; n <= total; n++) nums.push(n);
+  } else {
+    const keep = new Set([1, total, current]);
+    for (let d = 1; d <= radius; d++) {
+      if (current - d >= 1) keep.add(current - d);
+      if (current + d <= total) keep.add(current + d);
+    }
+    Array.from(keep).sort((a, b) => a - b).forEach((n, i, arr) => {
+      if (i && n - arr[i - 1] > 1) nums.push(null);
+      nums.push(n);
+    });
+  }
+  let slot = 0;
+  return nums.map((n) => (n === null ? null : { n, slot: slot++ }));
 }
 
 function genreLabel(items, id) {
@@ -431,16 +674,28 @@ function Chip({ id, row, col, children, onSelect, active = false, downTo = null 
 // carrying ids `page-0-*` — so navigateGrid composed `filter-0-1`, which is a
 // GENRE chip: Right from 上一页 jumped into the genre strip and Left from it
 // fell out to the sidebar.
-function PageChip({ id, children, onSelect }) {
+//
+// `active` marks the batch the viewer is ON. It uses a distinct class rather
+// than the genre strip's `.active` because the two mean different things: a
+// genre chip that is active is a FILTER currently applied, a page chip that is
+// active is a LOCATION. Sharing the style made the current page look like a
+// selected filter.
+function PageChip({ id, col = 0, children, onSelect, active = false }) {
   const upTarget = useShelfFooterUp();
   const { props, isFocused } = useFocusable({
     id,
+    row: 0,
+    col,
     onSelect,
     group: 'page',
     onNavigate: (dir) => (dir === 'up' && upTarget ? upTarget : undefined)
   });
   return (
-    <span className={`filter-chip focusable${isFocused ? ' focused' : ''}`} {...props}>
+    <span
+      className={`filter-chip page-chip focusable${active ? ' current' : ''}${isFocused ? ' focused' : ''}`}
+      {...props}
+      aria-current={active ? 'page' : undefined}
+    >
       {children}
     </span>
   );

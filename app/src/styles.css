@@ -324,7 +324,12 @@ img { display: block; }
    single `filter-0-N` numbering, so ArrowDown (row+1) found nothing and every
    genre past the first wrapped line was unreachable. Each row is its own
    element here so the visual rows and the focus rows are the same thing. */
-.filter-grid { padding: 0 56px 14px; flex-shrink: 0; transition: max-height .22s ease, opacity .22s ease, padding .22s ease; max-height: 200px; opacity: 1; overflow: hidden; }
+/* `max-height` has to clear the tallest the strip can get, which now depends on
+   the chip scale: two rows of grown chips are taller than two rows of the base
+   font. 280px covers two rows at the 1.6 ceiling with room to spare; the
+   transition still reads as a slide-away because the real height is well under
+   it in the common case. */
+.filter-grid { padding: 0 56px 14px; flex-shrink: 0; transition: max-height .22s ease, opacity .22s ease, padding .22s ease; max-height: 280px; opacity: 1; overflow: hidden; }
 .filter-grid.collapsed { max-height: 0; opacity: 0; padding-bottom: 0; }
 /* Rows must NEVER wrap on their own.
    The JS packer decides the row break from measured chip widths, and the focus
@@ -344,11 +349,39 @@ img { display: block; }
 /* space-between needs the tail to not carry a right margin, or the last chip
    sits one margin short of the edge and the row still looks ragged. */
 .filter-row .filter-chip:last-child { margin-right: 0; }
+
+/* When the font cap still leaves the strip short, the chips SHARE the slack
+   instead of leaving it at the right edge. `flex: 1 1 auto` with an auto basis
+   keeps the labels' own proportions, so a two-character genre does not become
+   as wide as a four-character one.
+   
+   Two rules have to change together with grow, and both were learned the hard
+   way (measured 111% fill, i.e. a clipped tail, before they were):
+   
+     * `justify-content` back to flex-start — the row is already full once grow
+       is on, and asking space-between to spread a remainder on top of that
+       pushes it over the edge;
+     * the per-chip right margin becomes `gap` on the row. flex-grow distributes
+       free space WITHOUT accounting for margins, so eleven 8px margins were
+       laid on top of a row that had already been grown to exactly the strip
+       width. A `gap` is part of the container's own sizing and is subtracted
+       before free space is computed. */
+.filter-grid.stretched .filter-row { justify-content: flex-start; gap: 8px; }
+.filter-grid.stretched .filter-chip { flex: 1 1 auto; text-align: center; margin-right: 0; }
 .filter-chip {
   background: var(--tv-card); border: 2px solid var(--tv-line);
   border-radius: 24px; color: var(--tv-secondary);
-  padding: 7px 16px; margin: 0 8px 0 0;
-  font-size: calc(18px * var(--ui-scale)); cursor: pointer;
+  /* `--chip-scale` comes from the strip (`.filter-grid`, written by the page
+     once it has MEASURED the labels): a strip with room to spare grows its
+     chips until the rows fill, one with a long list stays at 1.
+     
+     The fallback is 1 via a var() default, NOT a redeclaration here: declaring
+     `--chip-scale: 1` on the chip itself would SHADOW the strip's value, which
+     is exactly the bug that made the scale have no visible effect. */
+  --chip-s: var(--chip-scale, 1);
+  padding: calc(7px * var(--chip-s)) calc(16px * var(--chip-s));
+  margin: 0 8px 0 0;
+  font-size: calc(18px * var(--ui-scale) * var(--chip-s)); cursor: pointer;
   white-space: nowrap; flex: none;
   transition: background .12s ease, color .12s ease, transform .12s ease;
 }
@@ -358,6 +391,34 @@ img { display: block; }
 .filter-chip.focused {
   background: var(--tv-focus); color: #17181c; border-color: var(--tv-focus);
   transform: scale(1.08); font-weight: 600;
+}
+
+/* ---------- batch pager ---------- */
+/* The pager replaces the old 上一批 / 下一批 pair with the batch NUMBERS, so a
+   viewer can jump straight to a later block instead of stepping through it. */
+.batch-pager { display: flex; align-items: center; gap: 20px; flex-wrap: nowrap; }
+.batch-span { color: var(--tv-secondary); font-size: calc(18px * var(--ui-scale)); white-space: nowrap; }
+.batch-list { display: flex; align-items: center; }
+/* Square-ish number buttons rather than wide pills: the row has to stay one
+   line even when a category runs to a dozen blocks. */
+.page-chip {
+  min-width: calc(46px * var(--ui-scale));
+  text-align: center;
+  border-radius: 12px;
+  padding: calc(7px * var(--ui-scale)) 0;
+  font-variant-numeric: tabular-nums;
+}
+/* Where the viewer IS. Distinct from the genre strip's `.active` (a filter
+   that is applied) — this is a location, and it keeps the accent even when it
+   does not hold the ring. */
+.page-chip.current {
+  color: #17181c; background: var(--tv-focus); border-color: var(--tv-focus);
+  font-weight: 700;
+}
+.page-chip.current.focused { transform: scale(1.08); }
+.batch-gap {
+  color: var(--tv-muted); font-size: calc(20px * var(--ui-scale));
+  padding: 0 6px; user-select: none;
 }
 
 /* ---------- category header ---------- */

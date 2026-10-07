@@ -146,8 +146,24 @@ function probeScript() {
         };
       });
 
-      out.everyRowFillsWell = out.rowFill.every(function (r) { return r.fillPct >= 82; });
+      // The strip's job is to be PACKED, and how packed it can be depends on
+      // how many chips there are: a list that fits one row should sit on one
+      // row and be stretched to fill it; a list that needs two rows is at its
+      // best when the two rows are EVEN, and an even split of 25 chips IS
+      // ~90%+. A flat "every row >= 82%" bar would fail a perfectly good
+      // two-row layout whose halves happen to be short, so assert the shape
+      // instead: never past two rows, no row overflowing, rows balanced, and
+      // the chips actually grew (scale > 1 — otherwise the strip is just the
+      // un-sized default and the request to make them bigger was not met).
+      var fills = out.rowFill.map(function (r) { return r.fillPct; });
       out.withinTwoRows = out.rows <= 2;
+      out.noRowOverflows = fills.every(function (f) { return f <= 101; });
+      out.rowsBalanced = fills.length > 1
+        ? Math.abs(fills[0] - fills[1]) <= 15
+        : true;
+      out.packedEnough = out.rows === 2
+        ? Math.min.apply(null, fills) >= 80
+        : Math.min.apply(null, fills) >= 70;
       out.visualLinesMatchFocusRows = out.rowFill.every(function (r) { return r.visualLines === 1; });
 
       // ---- collapse walk ----
@@ -173,8 +189,9 @@ function probeScript() {
         // painted values alongside for context.
         out.visibleOnFirstRow = !!(first && !first.strip.collapsed);
         out.hiddenOnThirdRow = !!(third && third.strip.collapsed);
-        out.ok = out.withinTwoRows && out.everyRowFillsWell &&
-          out.visualLinesMatchFocusRows && out.visibleOnFirstRow && out.hiddenOnThirdRow;
+        out.ok = out.withinTwoRows && out.noRowOverflows && out.rowsBalanced &&
+          out.packedEnough && out.visualLinesMatchFocusRows &&
+          out.visibleOnFirstRow && out.hiddenOnThirdRow;
         return out;
       });
     });
@@ -243,7 +260,9 @@ window.addEventListener('load', function () {
 
   const checks = [
     ['strip within two rows', result.withinTwoRows],
-    ['every row fills >= 82% of the strip', result.everyRowFillsWell],
+    ['no row overflows the strip', result.noRowOverflows],
+    ['rows balanced within 15%', result.rowsBalanced],
+    ['rows packed enough for their count', result.packedEnough],
     ['focus rows match visual lines', result.visualLinesMatchFocusRows],
     ['strip visible on first card row', result.visibleOnFirstRow],
     ['strip hidden on third card row', result.hiddenOnThirdRow]

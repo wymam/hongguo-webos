@@ -520,7 +520,15 @@ var provider = {
     var head = null;
 
     function pull(n) {
-      if (n > (head ? head.pagination.totalPages : 1)) return Promise.resolve();
+      // `head` carries the upstream's own page count, which is only known AFTER
+      // the first fetch. Guarding on it therefore has to treat "not fetched
+      // yet" as "unknown", not as 1 — the previous expression
+      // (`head ? head.pagination.totalPages : 1`) compared the REQUESTED page
+      // against 1 on the very first call, so any batch that did not start at
+      // page 1 returned immediately with nothing collected and surfaced as
+      // 分类数据为空. That is why jumping to a later batch failed while "first"
+      // always worked.
+      if (head && n > head.pagination.totalPages) return Promise.resolve();
       if (pages.length >= MAX_PAGES_PER_BATCH) return Promise.resolve();
       return fetchPage(n).then(function (res) {
         if (!head) head = res;
