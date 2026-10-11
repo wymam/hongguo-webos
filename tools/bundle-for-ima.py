@@ -49,12 +49,19 @@ def lang_for(path):
 
 
 def listed_files(root):
+    # -z + explicit utf-8: git otherwise C-quotes non-ASCII paths (default
+    # core.quotepath=true), handing back `"docs/\346\222\255..."` — a string
+    # that is not a usable filename. The first file with a Chinese name
+    # (docs/播放负载实测-….md) crashed the whole bundle with EINVAL before
+    # this was fixed; ASCII-only trees never exposed it. NUL separation also
+    # keeps paths with spaces intact, which splitlines() would not.
     out = subprocess.run(
-        ["git", "ls-files"], cwd=root, capture_output=True, text=True, check=True
+        ["git", "-c", "core.quotepath=false", "ls-files", "-z"],
+        cwd=root, capture_output=True, text=True, encoding="utf-8", check=True
     ).stdout
     files = []
-    for line in out.splitlines():
-        rel = line.strip()
+    for rel in out.split("\0"):
+        rel = rel.strip()
         if not rel:
             continue
         if rel in SKIP_EXACT or any(rel.startswith(p) for p in SKIP_PREFIXES):
