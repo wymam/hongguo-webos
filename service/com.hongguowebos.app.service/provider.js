@@ -100,6 +100,16 @@ function loadUpstream() {
     loadError = new Error('上游签名源导出异常');
     throw loadError;
   }
+
+  // Hijack the vendored range reader so EVERY range read in the process —
+  // including the ones inside prepareHeader, the step that opens playback and
+  // the one the truncation kept killing — goes through fetchWholeRange and can
+  // never see a short body. See fetchWholeRange for the measurements.
+  originalRemoteRange = api.remoteRange;
+  api.remoteRange = function (stream, start, end) {
+    return fetchWholeRange(stream, start, end, 0);
+  };
+
   return api;
 }
 
@@ -304,6 +314,15 @@ function fetchCategoryPage(a, route, n) {
 var RANGE_ATTEMPTS = 7;
 var RANGE_BACKOFF_MS = [0, 300, 700, 1300, 2000, 2600, 3200];
 
+// Split pieces get a short budget. Persistence is the cure for throttling on
+// the ORIGINAL window (it answers with an empty body, which clears); for a
+// truncated piece the cure is splitting again, not waiting.
+var SPLIT_ATTEMPTS = 3;
+
+// Never split below this. 32KiB is what the CDN was measured serving intact
+// most often (see fetchWholeRange), and it bounds the recursion depth.
+var SPLIT_MIN = 32 * 1024;
+
 // A stall watchdog would be ideal but the vendored client exposes no abort; the
 // honest safeguard is the retry budget above plus the short-read guard in
 // service.js, which refuses to emit a lying 206.
@@ -312,51 +331,126 @@ function sleep(ms) {
   return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
 
+// True for a network hiccup that is worth asking again about.
+//
+// Two branches, because both spellings occur in the wild and they carry
+// different information:
+//   * `e.code` — the original errno from Node (ENOTFOUND, EAI_AGAIN, ...),
+//     preserved by http-client even when it rewrites the message.
+//   * message text — some call sites only surface text, and http-client
+//     rewrites ENOTFOUND into "DNS lookup failed" (see its on('error') block),
+//     which matched NONE of the old patterns. On-device evidence that this
+//     matters: `recentErrors: "7680977186605517849: DNS lookup failed"` — a
+//     resolver blip that reached the viewer as a 502 even though every layer
+//     above it already had a retry budget.
+//
+// "DNS lookup failed" / ENOTFOUND / EAI_AGAIN are PRE-CONNECT failures: the
+// request never reached the server, so retrying is safe for any method.
+function isTransientNetworkError(e) {
+  var code = (e && e.code) || '';
+  if (/^E(NOTFOUND|AI_AGAIN|CONNREFUSED|CONNRESET|TIMEDOUT|PIPE|HOSTUNREACH|NETUNREACH|ADDRNOTAVAIL)$/.test(code)) {
+    return true;
+  }
+  var m = (e && e.message) || '';
+  return /DNS lookup failed|ENOTFOUND|EAI_AGAIN|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|timeout|50[234]/i.test(m);
+}
+
 function isTransientRangeError(e) {
   var m = (e && e.message) || '';
   // remoteRange throws "媒体 Range 长度异常: N/M" for a short or empty body, and
   // axios surfaces network hiccups as ECONNRESET/ETIMEDOUT/5xx-flavoured text.
-  return /长度异常/.test(m) || /ECONNRESET|ETIMEDOUT|EPIPE|EAI_AGAIN|socket hang up|timeout|502|503|504/i.test(m);
+  return /长度异常/.test(m) || isTransientNetworkError(e);
 }
 
-// Fetch exactly [start, end]. Falls back to progressively smaller windows when
-// the CDN keeps returning short reads, so a throttled stream still makes
-// forward progress instead of stalling until the player gives up.
-function remoteRangeResilient(a, stream, start, end) {
+// Reference to the UNTOUCHED vendored range reader. loadUpstream() hijacks
+// api.remoteRange to point at the completing wrapper below, so every range
+// read in the process — including the ones deep inside the vendored
+// prepareHeader — goes through it. Reaching back through the hijacked property
+// would recurse into the wrapper; this module-scope reference is what keeps
+// the chain finite.
+var originalRemoteRange = null;
+
+// Fetch [start, end] COMPLETELY, or throw.
+//
+// Retries the requested window first — that is what clears throttling, which
+// answers with an EMPTY body. When the budget is spent and the window can
+// still be split, the two halves are fetched and assembled instead of the
+// shortfall being returned. That distinction is not academic; it comes from
+// what was measured on the owner's TV (2026-10-11):
+//
+//   * A range request for 262144 bytes intermittently came back TRUNCATED but
+//     non-empty — sizes observed: 218, 32768, 131072 bytes. Five identical
+//     requests in a row gave 131072 / 131072 / 262144 / 32768 / 131072, i.e.
+//     the truncation is random and size-related.
+//   * Persistence does NOT reliably clear it: at 14:17 prepareHeader got
+//     218/262144 on all seven attempts, then the same on seven attempts
+//     against a FRESHLY SIGNED url (openStream's second round). Both exports
+//     of the error end with 播放失败.
+//   * A smaller ask usually does succeed, which is exactly what splitting
+//     exploits.
+//
+// And "complete" is not a nicety: for prepareHeader — which must parse
+// ftyp+moov out of the first 256KiB — a short body is fatal; and a short body
+// forwarded onward as a 206 whose Content-Range promises the full window
+// breaks Chromium's buffer model (the 跳绳/jump-to-end family of bugs).
+function fetchWholeRange(stream, start, end, depth) {
+  var want = end - start + 1;
+  // Persist on the original window (throttling lives there and persistence
+  // clears it); retry a split piece only briefly — splitting again, not
+  // waiting, is the remedy for what a piece can hit.
+  var maxAttempts = depth === 0 ? RANGE_ATTEMPTS : SPLIT_ATTEMPTS;
   var attempt = 0;
 
-  function once(s, e) {
-    return a.remoteRange(stream, s, e).then(function (remote) {
-      var want = e - s + 1;
+  function attemptOnce() {
+    return originalRemoteRange(stream, start, end).then(function (remote) {
       var got = remote.data ? remote.data.length : 0;
       if (got === want) return remote;
-      var err = new Error('媒体 Range 长度异常: ' + got + '/' + want);
+      // Belt and braces — the vendored reader already rejects short reads,
+      // so this branch only fires if that ever changes. The preview pinpoints
+      // WHAT came back instead of just how much.
+      var preview = '';
+      if (got > 0) {
+        try {
+          var head = Buffer.from(remote.data).slice(0, 48)
+            .toString('utf8').replace(/[^\x20-\x7e]+/g, '.');
+          preview = ' body=' + JSON.stringify(head);
+        } catch (e2) { /* preview is best-effort */ }
+      }
+      var err = new Error('媒体 Range 长度异常: ' + got + '/' + want + preview);
       err.__short = true;
       throw err;
-    });
-  }
-
-  function tryAttempt() {
-    return once(start, end).catch(function (e) {
+    }).catch(function (e) {
       if (!isTransientRangeError(e)) throw e;
       attempt += 1;
-      if (attempt >= RANGE_ATTEMPTS) {
-        // Out of retries at the requested size. If the window is still wide,
-        // halve it and try again — a smaller ask often succeeds while the
-        // client is being throttled. Stop at 32KiB to bound the work.
-        var want = end - start + 1;
-        if (want > 32 * 1024) {
-          var half = Math.max(32 * 1024, Math.floor(want / 2));
-          attempt = 0;
-          return remoteRangeResilient(a, stream, start, start + half - 1);
-        }
-        throw e;
+      if (attempt < maxAttempts) {
+        return sleep(RANGE_BACKOFF_MS[Math.min(attempt, RANGE_BACKOFF_MS.length - 1)] || 1800)
+          .then(attemptOnce);
       }
-      return sleep(RANGE_BACKOFF_MS[attempt] || 1800).then(tryAttempt);
+      // Budget spent. Split and assemble rather than hand back a short body.
+      if (want > SPLIT_MIN) {
+        var half = Math.max(SPLIT_MIN, Math.floor(want / 2));
+        return fetchWholeRange(stream, start, start + half - 1, depth + 1)
+          .then(function (first) {
+            return fetchWholeRange(stream, start + half, end, depth + 1)
+              .then(function (rest) {
+                return {
+                  data: Buffer.concat([Buffer.from(first.data), Buffer.from(rest.data)]),
+                  total: first.total || rest.total
+                };
+              });
+          });
+      }
+      throw e;
     });
   }
 
-  return tryAttempt();
+  return attemptOnce();
+}
+
+// The byte path's historical entry point. Kept as a thin wrapper so the handle
+// closures and the hijacked vendored reader share one implementation.
+function remoteRangeResilient(a, stream, start, end) {
+  return fetchWholeRange(stream, start, end, 0);
 }
 
 // prepareHeader, but tolerant of the throttling above. The vendored
@@ -497,6 +591,131 @@ function probeOne(episodeId) {
         return probeViaHeader(a, stream).catch(function () { return null; });
       });
     });
+}
+
+// Resolve the stream URL with the same persistence the data path gets.
+//
+// The resolve step (fetchVideoInfo -> signed request for the play URL) used to
+// have NO retry at all: the byte path could survive seven throttles, but a
+// single DNS blip on the very first call after a channel change surfaced to the
+// viewer as `播放失败` — observed on-device as
+//   recentErrors: "7680977186605517849: DNS lookup failed"
+// on an episode that played perfectly seconds earlier and seconds later. One
+// transient resolver failure must not be able to end a playback attempt.
+//
+// The retry is safe beyond pre-connect errors: fetchVideoInfo is a read-only
+// query (it returns stream metadata; it never mutates upstream state), so even
+// a connection reset mid-response can simply be asked again.
+//
+// Backoff is short because this sits on the open-a-stream critical path — the
+// player is waiting with a spinner, and ~3s total is the patience budget.
+var RESOLVE_ATTEMPTS = 4;
+var RESOLVE_BACKOFF_MS = [0, 400, 900, 1800];
+
+function resolveStreamResilient(a, id) {
+  var attempt = 0;
+  function tryOnce() {
+    return a.resolveStream(id, 'auto').catch(function (e) {
+      if (!isTransientNetworkError(e)) throw e;
+      attempt += 1;
+      if (attempt >= RESOLVE_ATTEMPTS) throw e;
+      return sleep(RESOLVE_BACKOFF_MS[attempt] || 1800).then(tryOnce);
+    });
+  }
+  return tryOnce();
+}
+
+// Build the playable handle from a resolved stream + prepared header.
+//
+// Extracted so the open path (below) can retry the whole resolve+prepare pair:
+// a handle closes over BOTH the signed URL and the header index, so a retry
+// that signs a new URL must build a new handle rather than reuse pieces of the
+// failed one.
+function makeStreamHandle(a, stream, prepared) {
+  return {
+    total: prepared.total,
+    quality: stream.quality || 'auto',
+    keyed: !!stream.key,
+    chunk: function (start, end) {
+      return remoteRangeResilient(a, stream, start, end).then(function (remote) {
+        return a.decryptPartial(remote.data, start, stream.key, prepared);
+      });
+    },
+    // Diagnostics only: split the two halves of `chunk` so a slowdown
+    // can be attributed to the network (rawChunk) or the CPU (decrypt).
+    rawChunk: function (start, end) {
+      return remoteRangeResilient(a, stream, start, end).then(function (remote) {
+        return remote.data;
+      });
+    },
+    decrypt: function (data, start) {
+      return a.decryptPartial(data, start, stream.key, prepared);
+    }
+  };
+}
+
+// Open a stream, re-signing the URL when the first signed one proves unusable.
+//
+// On-device evidence (2026-10-11 14:10:30, the owner's TV):
+//   recentErrors: "7692013453707332632: 媒体 Range 长度异常: 142/262144"
+// prepareHeader asked for 256KiB and got a 142-byte body on every one of its
+// seven tries — while the same episode served the full 256KiB fine a minute
+// later (verified by hand: HTTP 206, size 262144, 0.14s). That signature is NOT
+// the throttling the inner retry budget was tuned for: throttling answers with
+// an EMPTY body, which persistence does fix. A short but NON-EMPTY body means
+// the edge answered with something else entirely, and re-asking the same
+// signed URL seven times cannot recover it.
+//
+// The byte path already had this escape — fetchSegment drops the handle and
+// re-resolves when a segment fails. The header path did not, so one poisoned
+// URL ended the whole attempt with 播放失败. This wraps resolve + prepare in
+// one more layer: when the inner budgets are spent, drop the signed URL
+// (including the 5-minute stream cache that would hand the same one right
+// back) and sign a fresh one.
+//
+// Budget: 2 rounds. The typical poisoned-URL case recovers in ~11s (inner
+// budget + 0.5s + one successful request), which is inside the player's
+// patience; only a genuinely dead upstream pays the ~2x worst case. One round
+// of re-signing is the sweet spot — enough to dodge a bad URL, short enough
+// that a real outage still surfaces as an error instead of hanging forever.
+var OPEN_ATTEMPTS = 2;
+var OPEN_BACKOFF_MS = [0, 500];
+
+function openStream(a, id) {
+  var attempt = 0;
+
+  function signAndPrepare() {
+    return Promise.resolve()
+      .then(function () { return resolveStreamResilient(a, id); })
+      .then(function (stream) {
+        return prepareHeaderResilient(a, stream).then(function (prepared) {
+          return makeStreamHandle(a, stream, prepared);
+        });
+      });
+  }
+
+  function tryRound() {
+    return signAndPrepare().catch(function (e) {
+      if (!isTransientRangeError(e)) throw e;
+      attempt += 1;
+      if (attempt >= OPEN_ATTEMPTS) {
+        // Both rounds are spent. Say so — the raw message alone ("length
+        // anomaly", "DNS lookup failed") does not reveal that a freshly
+        // signed URL was already tried, which is the single most useful fact
+        // when reading recentErrors after the fact.
+        e.message = '开流失败（已换新签名 ' + OPEN_ATTEMPTS + ' 轮）: ' + e.message;
+        throw e;
+      }
+      // Drop every cache that would hand the same signed URL back.
+      try {
+        a.streamCache.delete(id + '|auto');
+        a.videoInfoCache.delete(id);
+      } catch (e2) { /* cache may be cold */ }
+      return sleep(OPEN_BACKOFF_MS[attempt] || 500).then(tryRound);
+    });
+  }
+
+  return tryRound();
 }
 
 // ---------- public API ----------
@@ -766,6 +985,12 @@ var provider = {
   },
 
   // Resolve a playable stream handle for one episode.
+  // Resolve a playable stream handle for one episode.
+  //
+  // The header step inside is the fragile one (it asks for 256KiB in a single
+  // request), and the pair resolve+prepare is wrapped in openStream so that a
+  // poisoned signed URL gets replaced rather than retried. See openStream for
+  // the on-device evidence that motivated the extra round.
   stream: function (id, fresh) {
     var a = loadUpstream();
     if (fresh) {
@@ -774,38 +999,7 @@ var provider = {
         api.videoInfoCache.delete(id);
       } catch (e) { /* cache may be cold */ }
     }
-    return Promise.resolve()
-      .then(function () { return a.resolveStream(id, 'auto'); })
-      .then(function (stream) {
-        // Header prep is the fragile step: it asks for 256KiB in one request,
-        // and the CDN intermittently answers that with an EMPTY body instead of
-        // 206 (measured on-device: "媒体 Range 长度异常: 0/262144"). It is not a
-        // hard byte ceiling — the same 256KiB request succeeds on the next try —
-        // so it is throttling, and the cure is persistence, not a smaller cap.
-        // See remoteRangeResilient below.
-        return prepareHeaderResilient(a, stream).then(function (prepared) {
-          return {
-            total: prepared.total,
-            quality: stream.quality || 'auto',
-            keyed: !!stream.key,
-            chunk: function (start, end) {
-              return remoteRangeResilient(a, stream, start, end).then(function (remote) {
-                return a.decryptPartial(remote.data, start, stream.key, prepared);
-              });
-            },
-            // Diagnostics only: split the two halves of `chunk` so a slowdown
-            // can be attributed to the network (rawChunk) or the CPU (decrypt).
-            rawChunk: function (start, end) {
-              return remoteRangeResilient(a, stream, start, end).then(function (remote) {
-                return remote.data;
-              });
-            },
-            decrypt: function (data, start) {
-              return a.decryptPartial(data, start, stream.key, prepared);
-            }
-          };
-        });
-      });
+    return openStream(a, id);
   },
 
   // ---------- orientation probing (portrait vs landscape) -----------------
@@ -936,4 +1130,20 @@ var sweep = setInterval(function () {
 }, 60000);
 if (sweep.unref) sweep.unref();
 
-module.exports = { provider: provider, SITE: SITE };
+module.exports = {
+  provider: provider,
+  SITE: SITE,
+  // Test hooks for tools/verify-transient-retry.js — the retry classifiers and
+  // the resolver wrapper are otherwise module-private, and their behaviour is
+  // the very thing that regressed on-device (a DNS blip escaped every layer).
+  __test: {
+    isTransientNetworkError: isTransientNetworkError,
+    isTransientRangeError: isTransientRangeError,
+    resolveStreamResilient: resolveStreamResilient,
+    openStream: openStream,
+    fetchWholeRange: fetchWholeRange,
+    // Lets a test drive fetchWholeRange without loading the vm upstream. The
+    // hook is what loadUpstream() itself sets in production.
+    setOriginalRemoteRange: function (fn) { originalRemoteRange = fn; }
+  }
+};

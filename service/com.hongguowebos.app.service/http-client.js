@@ -30,7 +30,45 @@ function toBuffer(data) {
   return Buffer.from(String(data), 'utf8');
 }
 
+// ---------- transient pre-connect retry ----------
+//
+// On the owner's network the TV's resolver intermittently fails for hostnames
+// that resolve fine seconds before and after (measured: one `DNS lookup
+// failed` / ENOTFOUND in 182 media requests). The layers above retry their own
+// operations, but every one of them bottoms out HERE — so a blip during any
+// single attempt still propagates as an error unless this layer is persistent
+// too. Retrying at the source turns "one attempt in twenty dies" into "one
+// attempt in many thousand dies".
+//
+// Only PRE-CONNECT failures are retried: DNS resolution and connection
+// establishment. At that point the request provably never reached the server
+// (nothing was sent, nothing was processed), so a retry is safe for ANY method
+// — including the signed POSTs this service makes. Errors after bytes have
+// been written (ECONNRESET on response, response timeout) are NOT retried
+// here: the caller knows its own semantics and can decide.
+var RETRYABLE_PRE_CONNECT = /^E(NOTFOUND|AI_AGAIN|CONNREFUSED|HOSTUNREACH|NETUNREACH|ADDRNOTAVAIL)$/;
+var MAX_RETRIES = 2;
+var RETRY_DELAY_MS = [250, 700];
+
+function sleep(ms) {
+  return new Promise(function (resolve) { setTimeout(resolve, ms); });
+}
+
 function request(options) {
+  return attemptRequest(options, 0);
+}
+
+function attemptRequest(options, attempt) {
+  return doRequest(options).catch(function (err) {
+    var code = (err && err.code) || '';
+    if (!RETRYABLE_PRE_CONNECT.test(code) || attempt >= MAX_RETRIES) throw err;
+    return sleep(RETRY_DELAY_MS[attempt] || 700).then(function () {
+      return attemptRequest(options, attempt + 1);
+    });
+  });
+}
+
+function doRequest(options) {
   var url = options.url;
   var method = (options.method || 'GET').toUpperCase();
   var headers = options.headers || {};
