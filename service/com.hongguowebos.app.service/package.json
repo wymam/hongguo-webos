@@ -1,7 +1,7 @@
 {
   "name": "com.hongguowebos.app.service",
   "main": "service.js",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "private": true,
   "description": "Red-berry short-drama Luna service and local media proxy for webOS",
   "license": "GPL-3.0-only",

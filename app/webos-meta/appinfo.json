@@ -1,6 +1,6 @@
 {
   "id": "com.hongguowebos.app",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "vendor": "HongguoWebOS",
   "type": "web",
   "main": "index.html",
