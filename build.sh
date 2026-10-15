@@ -71,9 +71,23 @@ echo ""
 echo "=== [3/4] Package .ipk ==="
 mkdir -p dist
 rm -f dist/*.ipk
+# The runtime device identity (.device-id.json) is minted per install on first
+# launch. Shipping it inside the package would make every install share one
+# identity — which the upstream bans as a unit, so one ban would take out all
+# of them. Move it OUTSIDE the packaged tree for the duration of the build (a
+# rename inside the service directory would itself get packaged).
+ID_FILE="service/com.hongguowebos.app.service/.device-id.json"
+ID_BACKUP="${TMPDIR:-/tmp}/hongguo-device-id.build-bak"
+if [ -f "$ID_FILE" ]; then
+  mv "$ID_FILE" "$ID_BACKUP"
+  echo "stripped runtime device identity from the package (held at $ID_BACKUP)"
+fi
 # NOTE: do NOT add `--no-minify`. It is not an option in @webos-tools/cli 3.x;
 # passing it makes the CLI print "The specified path does not exist <package>".
 ares_run ares-package -o dist app/dist service/com.hongguowebos.app.service 2>&1 | tail -8
+if [ -f "$ID_BACKUP" ]; then
+  mv "$ID_BACKUP" "$ID_FILE"
+fi
 
 # ares-package writes <id>_<version>_all.ipk; locate whatever it produced.
 IPK="$(ls -t dist/*.ipk 2>/dev/null | head -1 || true)"

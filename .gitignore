@@ -11,6 +11,9 @@ node_modules/
 .tools/
 tools/out/
 
+# runtime device identity — minted per install, must never be shared or public
+service/com.hongguowebos.app.service/.device-id.json
+
 # local build-script leftovers
 app/dist/
 

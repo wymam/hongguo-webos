@@ -294,6 +294,122 @@ function freePort() {
     assert.ok(Date.now() - t0 < 30000, 'must stay bounded');
   });
 
+  console.log('\n--- device identity: banned iid/device_id self-heals ---');
+
+  // Field evidence (2026-10-14): EVERY signed call returned
+  //   HTTP 200 { "Code": 110001, "Message": "未知异常" }
+  // for the pinned pair, while two freshly generated identities got Code 0 on
+  // the identical request with the identical signing code. The upstream bans
+  // individual device identities; the cure is a new pair, not another attempt.
+
+  await check('device rejection is recognised (business code, HTTP 200)', () => {
+    assert.strictEqual(T.isDeviceRejected(new Error('video_model failed: 未知异常')), true);
+    assert.strictEqual(T.isDeviceRejected(new Error('video_model failed: 110001')), true);
+    assert.strictEqual(T.isDeviceRejected(new Error('App search failed: unknown error')), true);
+    assert.strictEqual(T.isDeviceRejected(new Error('DNS lookup failed')), false);
+    assert.strictEqual(T.isDeviceRejected(new Error('没有可用清晰度')), false);
+    assert.strictEqual(T.isDeviceRejected(null), false);
+  });
+
+  await check('patch() rewrites the pinned pair with the current identity', () => {
+    const dev = T.deviceId;
+    dev.__setStore({ read: function () { return null; }, write: function () { return true; } });
+    dev.force({ iid: '1990000000000001', device_id: '1990000000000002' });
+    const sample = "const DEVICE = {\n    iid: '1905892595382586', device_id: '1905892595378490', ac: 'wifi' };";
+    const patched = dev.patch(sample);
+    assert.ok(patched.indexOf("iid: '1990000000000001', device_id: '1990000000000002'") >= 0,
+      'the current pair must be in force');
+    assert.ok(patched.indexOf(dev.PINNED.iid) < 0, 'the banned pair must be gone');
+    // A drifted vendored block is left alone rather than mangled.
+    assert.strictEqual(dev.patch("const DEVICE = { iid: '1', device_id: '2' };"),
+      "const DEVICE = { iid: '1', device_id: '2' };", 'an unmatched block must pass through unchanged');
+  });
+
+  await check('rotate() mints a different, well-formed pair', () => {
+    const dev = T.deviceId;
+    dev.__setStore({ read: function () { return null; }, write: function () { return true; } });
+    dev.force({ iid: '1990000000000001', device_id: '1990000000000002' });
+    const after = dev.rotate('test');
+    assert.notStrictEqual(after.now.iid, after.previous.iid, 'iid must change');
+    assert.notStrictEqual(after.now.device_id, after.previous.device_id, 'device_id must change');
+    assert.ok(/^\d{16}$/.test(after.now.iid), `iid must be 16 digits, got ${after.now.iid}`);
+    assert.ok(/^\d{16}$/.test(after.now.device_id), `device_id must be 16 digits, got ${after.now.device_id}`);
+    assert.strictEqual(after.now.rotated, true);
+  });
+
+  await check('THE 2026-10-14 case: banned identity -> rotate -> same call succeeds', async () => {
+    const dev = T.deviceId;
+    dev.__setStore({ read: function () { return null; }, write: function () { return true; } });
+    dev.force({ iid: dev.PINNED.iid, device_id: dev.PINNED.device_id });
+
+    // The upstream refuses the pinned pair on the first call and accepts
+    // whatever identity comes after the rotation.
+    const state = { resolves: 0, reloads: 0 };
+    const a = {
+      streamCache: { delete: function () {} },
+      videoInfoCache: { delete: function () {} },
+      resolveStream: function () {
+        state.resolves++;
+        const banned = state.resolves === 1;   // the pinned identity
+        const e = new Error('video_model failed: 未知异常');
+        return banned ? Promise.reject(e) : Promise.resolve({ url: 'http://cdn.test/ok.mp4', quality: 'auto', key: null });
+      }
+    };
+    T.setRotationReload(function () { state.reloads++; return a; });
+
+    const stream = await T.resolveStreamResilient(a, '7692013554404166680');
+    assert.ok(stream && stream.url, 'must produce a stream after rotating');
+    assert.strictEqual(state.reloads, 1, `expected exactly one identity rotation, got ${state.reloads}`);
+    assert.notStrictEqual(dev.current().iid, dev.PINNED.iid, 'the banned iid must no longer be in force');
+    assert.strictEqual(dev.current().rotated, true);
+  });
+
+  await check('rotations are bounded, then the error is honest', async () => {
+    const dev = T.deviceId;
+    dev.__setStore({ read: function () { return null; }, write: function () { return true; } });
+    dev.force({ iid: '1990000000000001', device_id: '1990000000000002' });
+
+    let resolves = 0;
+    const a = {
+      streamCache: { delete: function () {} },
+      videoInfoCache: { delete: function () {} },
+      resolveStream: function () {
+        resolves++;
+        return Promise.reject(new Error('video_model failed: 未知异常'));
+      }
+    };
+    T.setRotationReload(function () { return a; });
+
+    let err = null;
+    const t0 = Date.now();
+    try { await T.resolveStreamResilient(a, '1'); } catch (e) { err = e; }
+    assert.ok(err, 'should throw');
+    assert.ok(/未知异常/.test(err.message), 'must surface the upstream verdict, not a wrapper');
+    // 1 original attempt + 1 after each of the 3 rotations; the 5th rejection
+    // is past the budget and must surface instead of rotating again.
+    assert.strictEqual(resolves, 4, `expected 1 + 3 rotations attempts, got ${resolves}`);
+    assert.ok(Date.now() - t0 < 20000, 'must stay bounded');
+  });
+
+  await check('a hard video error is NOT mistaken for a device ban', async () => {
+    const dev = T.deviceId;
+    dev.__setStore({ read: function () { return null; }, write: function () { return true; } });
+    dev.force({ iid: '1990000000000001', device_id: '1990000000000002' });
+
+    let reloads = 0;
+    const a = {
+      streamCache: { delete: function () {} },
+      videoInfoCache: { delete: function () {} },
+      resolveStream: function () { return Promise.reject(new Error('没有可用清晰度')); }
+    };
+    T.setRotationReload(function () { reloads++; return a; });
+
+    let err = null;
+    try { await T.resolveStreamResilient(a, '1'); } catch (e) { err = e; }
+    assert.ok(err, 'should throw');
+    assert.strictEqual(reloads, 0, `hard errors must not rotate the identity, got ${reloads} rotations`);
+  });
+
   console.log(`\n${passed}/${passed + failed} passed`);
   process.exit(failed ? 1 : 0);
 })();

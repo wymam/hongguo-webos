@@ -24,6 +24,7 @@ var vm = require('vm');
 var cryptoShim = require('./crypto-shim.js');
 var crypto = require('crypto');
 var httpClient = require('./http-client.js');
+var deviceId = require('./device-id.js');
 
 var SITE = 'https://hongguoduanju.com';
 var VENDOR_FILE = path.join(__dirname, 'vendor', 'hongguo.cjs');
@@ -56,6 +57,12 @@ function loadUpstream() {
     loadError = new Error('上游签名源缺失: ' + e.message);
     throw loadError;
   }
+
+  // The upstream bans individual iid/device_id pairs (observed 2026-10-14:
+  // Code 110001 "未知异常" for the pinned pair, Code 0 for fresh ones, same
+  // signing code). Run the vendored source under the CURRENT identity so every
+  // signed request — play, search, detail — carries it.
+  source = deviceId.patch(source);
 
   var context = vm.createContext({
     require: function (name) {
@@ -111,6 +118,45 @@ function loadUpstream() {
   };
 
   return api;
+}
+
+// The upstream object currently in force.
+//
+// Only the rotation path changes it: reloadUpstream() rebuilds `api` under a
+// new identity. So when `api` is set, that IS the live object; when it is not
+// set, nothing in this process has loaded the vendored source and the caller's
+// own object (a test stub, or a caller-supplied handle) must be kept.
+function liveApi(fallback) {
+  try {
+    if (api) return api;
+  } catch (e) { /* fall through to the caller's */ }
+  return fallback;
+}
+
+// Drop the evaluated upstream and build it again. Required after a device
+// rotation: the identity is baked into the vendored source at evaluation time,
+// so the only way a new iid/device_id takes effect is a fresh runInContext —
+// which also discards every cache the old identity filled (streamCache entries
+// signed for the banned device are worthless to the new one).
+function reloadUpstream() {
+  api = null;
+  loadError = null;
+  return loadUpstream();
+}
+
+// The vendored source under the CURRENT device identity, rebuilt from scratch.
+// Split out so the identity rotation can call it, and so tests can substitute
+// a stub instead of re-evaluating the real vendored file (which would sign
+// against the live upstream).
+var applyRotation = reloadUpstream;
+
+// The upstream's verdict on a banned identity, wrapped by the vendored code as
+// "video_model failed: 未知异常" / "App search failed: ...". HTTP is 200 — this
+// is a business-code rejection, not a transport failure, which is exactly why
+// the transport-shaped retries never fired.
+function isDeviceRejected(e) {
+  var m = (e && e.message) || '';
+  return /110001/.test(m) || /未知异常/.test(m) || /unknown error/i.test(m);
 }
 
 // ---------- shape adapters, matched to the LIVE field names ----------
@@ -611,11 +657,30 @@ function probeOne(episodeId) {
 // player is waiting with a spinner, and ~3s total is the patience budget.
 var RESOLVE_ATTEMPTS = 4;
 var RESOLVE_BACKOFF_MS = [0, 400, 900, 1800];
+// Identity rotations allowed per open attempt. Three fresh identities are
+// enough to prove the upstream is refusing us for a reason a new pair cannot
+// fix (which is what a rotating refusal would look like).
+var DEVICE_ROTATIONS = 3;
+var ROTATE_BACKOFF_MS = 700;
 
 function resolveStreamResilient(a, id) {
   var attempt = 0;
+  var rotations = 0;
   function tryOnce() {
     return a.resolveStream(id, 'auto').catch(function (e) {
+      // A banned identity is the one failure none of the transport retries can
+      // clear: measured 2026-10-14, the very same request under a freshly
+      // generated iid/device_id returned Code 0. So the cure is a new
+      // identity, not another attempt — re-evaluate the vendored source under
+      // it (which also drops the caches the banned device filled) and go
+      // again. Bounded, because if three new identities are all refused the
+      // upstream is refusing us for a reason a new pair cannot fix.
+      if (isDeviceRejected(e) && rotations < DEVICE_ROTATIONS) {
+        rotations += 1;
+        deviceId.rotate('upstream rejected identity (110001)');
+        a = applyRotation();
+        return sleep(ROTATE_BACKOFF_MS).then(tryOnce);
+      }
       if (!isTransientNetworkError(e)) throw e;
       attempt += 1;
       if (attempt >= RESOLVE_ATTEMPTS) throw e;
@@ -688,13 +753,21 @@ function openStream(a, id) {
     return Promise.resolve()
       .then(function () { return resolveStreamResilient(a, id); })
       .then(function (stream) {
-        return prepareHeaderResilient(a, stream).then(function (prepared) {
-          return makeStreamHandle(a, stream, prepared);
+        // resolveStreamResilient may have rotated the device identity, which
+        // re-evaluates the vendored source under the new pair. Take whatever
+        // api is in force NOW so prepareHeader signs with the identity that
+        // just succeeded rather than the one that was refused.
+        var live = liveApi(a);
+        return prepareHeaderResilient(live, stream).then(function (prepared) {
+          return makeStreamHandle(live, stream, prepared);
         });
       });
   }
 
   function tryRound() {
+    // An inner rotation replaces the evaluated upstream; take the live one so
+    // this round signs with the identity currently in force.
+    a = liveApi(a);
     return signAndPrepare().catch(function (e) {
       if (!isTransientRangeError(e)) throw e;
       attempt += 1;
@@ -1139,9 +1212,14 @@ module.exports = {
   __test: {
     isTransientNetworkError: isTransientNetworkError,
     isTransientRangeError: isTransientRangeError,
+    isDeviceRejected: isDeviceRejected,
     resolveStreamResilient: resolveStreamResilient,
     openStream: openStream,
     fetchWholeRange: fetchWholeRange,
+    deviceId: deviceId,
+    // Substitute what a device rotation yields (tests avoid re-evaluating the
+    // real vendored source, which would sign against the live upstream).
+    setRotationReload: function (fn) { applyRotation = fn; },
     // Lets a test drive fetchWholeRange without loading the vm upstream. The
     // hook is what loadUpstream() itself sets in production.
     setOriginalRemoteRange: function (fn) { originalRemoteRange = fn; }
