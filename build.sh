@@ -16,6 +16,25 @@ if [ "$1" = "--deploy" ]; then MODE="deploy"; fi
 
 NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
 
+# The runtime device identity is parked at the REPO ROOT while packaging.
+# ares-package only ever sees `app/dist` and `service/…`, so the root is a safe
+# holding spot that needs no temp directory at all — and no temp directory
+# means nothing to clean up on the way out (an earlier version parked it in
+# TMPDIR and the cleanup was refused by the host's path guard).
+ID_PARK=".device-id.parked"
+# One combined EXIT handler. bash REPLACES an earlier `trap ... EXIT` rather
+# than chaining, so a second trap for the identity restore would have silently
+# dropped this one (or the other way round) — exactly the bug that shipped
+# once. Keep it to a single handler.
+on_exit() {
+  if [ -n "$ID_PARKED" ] && [ -f "$ID_PARK" ]; then
+    mv "$ID_PARK" "$ID_FILE"
+    ID_PARKED=""
+    echo "restored runtime device identity to $ID_FILE"
+  fi
+}
+trap on_exit EXIT
+
 # Locate the webOS CLI. `ares-package` is a Node script, so we can always invoke
 # it through `node` — which matters on hosts where the .bin shims are not on
 # PATH (and where the package's own postinstall cannot run under a restricted
@@ -74,17 +93,23 @@ rm -f dist/*.ipk
 # The runtime device identity (.device-id.json) is minted per install on first
 # launch. Shipping it inside the package would make every install share one
 # identity — which the upstream bans as a unit, so one ban would take out all
-# of them. Move it OUTSIDE the packaged tree for the duration of the build (a
-# rename inside the service directory would itself get packaged).
+# of them. Park it at the repo root for the duration of the build: ares-package
+# is handed app/dist and service/… only, so the root is never staged, and a
+# rename inside the service directory would itself get packaged (that exact
+# mistake shipped once as a stray .device-id.json.build-bak inside the ipk).
 ID_FILE="service/com.hongguowebos.app.service/.device-id.json"
-ID_BACKUP="${TMPDIR:-/tmp}/hongguo-device-id.build-bak"
 if [ -f "$ID_FILE" ]; then
-  mv "$ID_FILE" "$ID_BACKUP"
-  echo "stripped runtime device identity from the package (held at $ID_BACKUP)"
+  mv "$ID_FILE" "$ID_PARK"
+  ID_PARKED=1
+  echo "stripped runtime device identity from the package (held at $ID_PARK)"
 fi
 # NOTE: do NOT add `--no-minify`. It is not an option in @webos-tools/cli 3.x;
 # passing it makes the CLI print "The specified path does not exist <package>".
-ares_run ares-package -o dist app/dist service/com.hongguowebos.app.service 2>&1 | tail -8
+# ares-package writes the artifact and THEN fails to rmdir its own staging tree
+# on Windows (EPERM — something still holds a handle on vendor/). The ipk is
+# already complete at that point, so do not let their cleanup problem fail the
+# build: the existence check below is the real gate on success.
+ares_run ares-package -o dist app/dist service/com.hongguowebos.app.service 2>&1 | tail -8 || true
 if [ -f "$ID_BACKUP" ]; then
   mv "$ID_BACKUP" "$ID_FILE"
 fi
